@@ -11,6 +11,7 @@ WORKDIR /src
 COPY go.mod ./
 COPY go.sum ./
 COPY cmd/ ./cmd/
+COPY auth/ ./auth/
 COPY content/ ./content/
 COPY web/*.go ./web/
 COPY --from=frontend /src/web/dist ./web/dist

@@ -37,7 +37,7 @@
 | `go test -tags production ./...` | 通过 | 生产嵌入模式通过。 |
 | `go vet -tags production ./...` | 通过 | 后端静态检查通过。 |
 | `npm run build` | 通过 | Vue 类型检查与 Vite 生产构建通过。 |
-| Docker/GHCR | 通过 | GitHub Actions run [34065322519](https://github.com/ruoshui6662/noteblog/actions/runs/34065322519) 的 AMD64 构建、Compose、媒体边界、条件请求、非 root、持久化测试和 AMD64/ARM64 发布均成功。 |
+| Docker/GHCR | 通过 | GitHub Actions run [34065441619](https://github.com/ruoshui6662/noteblog/actions/runs/34065441619) 的 AMD64 构建、Compose、媒体边界、条件请求、非 root、持久化测试和 AMD64/ARM64 发布均成功。 |
 
 ## 当前边界
 
@@ -61,5 +61,5 @@
 ## 下一步
 
 1. 增加真实示例内容和文档路径/媒体 URL 契约，完成阅读端验收。
-2. 进入管理员初始化和 SQLite 权限数据，先建立 fail-closed 的身份边界。
+2. 进入管理端文档 CRUD，在已完成的管理员初始化、SQLite 会话和 fail-closed 身份边界之上实现原子文件写入。
 3. 在管理端写入前完成原子文件写入和版本冲突模型。

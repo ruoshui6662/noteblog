@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"markdown-docs/auth"
 	"markdown-docs/content"
 )
 
@@ -39,6 +40,55 @@ func TestRoutesAndReadiness(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest("GET", "/readyz", nil))
 	if response.Code != 503 {
 		t.Fatalf("missing data directory: got %d, want 503", response.Code)
+	}
+}
+
+func TestAuthAPI(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := ensureDataDirectories(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	store, err := auth.Open(filepath.Join(dataDir, "noteblog.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	app := &server{config: config{DataDir: dataDir}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), auth: store}
+	handler := app.routes()
+	setup := httptest.NewRecorder()
+	handler.ServeHTTP(setup, httptest.NewRequest("POST", "/api/v1/auth/setup", strings.NewReader(`{"username":"admin","password":"correct horse battery staple"}`)))
+	if setup.Code != 201 {
+		t.Fatalf("setup status = %d: %s", setup.Code, setup.Body.String())
+	}
+	secondSetup := httptest.NewRecorder()
+	handler.ServeHTTP(secondSetup, httptest.NewRequest("POST", "/api/v1/auth/setup", strings.NewReader(`{"username":"other","password":"correct horse battery staple"}`)))
+	if secondSetup.Code != 409 {
+		t.Fatalf("second setup status = %d", secondSetup.Code)
+	}
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"correct horse battery staple"}`)))
+	if login.Code != 200 || login.Header().Get("Set-Cookie") == "" {
+		t.Fatalf("login = %d %q", login.Code, login.Header().Get("Set-Cookie"))
+	}
+	cookie := login.Result().Cookies()[0]
+	meRequest := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
+	meRequest.AddCookie(cookie)
+	me := httptest.NewRecorder()
+	handler.ServeHTTP(me, meRequest)
+	if me.Code != 200 || !strings.Contains(me.Body.String(), `"username":"admin"`) {
+		t.Fatalf("me = %d %s", me.Code, me.Body.String())
+	}
+	logoutRequest := httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
+	logoutRequest.AddCookie(cookie)
+	logout := httptest.NewRecorder()
+	handler.ServeHTTP(logout, logoutRequest)
+	if logout.Code != 200 {
+		t.Fatalf("logout = %d %s", logout.Code, logout.Body.String())
+	}
+	meAfterLogout := httptest.NewRecorder()
+	handler.ServeHTTP(meAfterLogout, meRequest)
+	if meAfterLogout.Code != 401 {
+		t.Fatalf("me after logout = %d", meAfterLogout.Code)
 	}
 }
 

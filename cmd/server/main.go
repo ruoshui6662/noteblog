@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"markdown-docs/auth"
 	"markdown-docs/content"
 	webassets "markdown-docs/web"
 )
@@ -27,6 +28,7 @@ type server struct {
 	config config
 	logger *slog.Logger
 	store  *content.Store
+	auth   *auth.Store
 }
 
 func main() {
@@ -58,7 +60,13 @@ func main() {
 		logger.Error("failed to scan content directory", "error", err)
 		os.Exit(1)
 	}
-	app := &server{config: cfg, logger: logger, store: store}
+	authStore, err := auth.Open(filepath.Join(cfg.DataDir, "noteblog.db"))
+	if err != nil {
+		logger.Error("failed to initialize auth database", "error", err)
+		os.Exit(1)
+	}
+	defer authStore.Close()
+	app := &server{config: cfg, logger: logger, store: store, auth: authStore}
 	httpServer := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           app.withRequestLog(app.routes()),
@@ -81,6 +89,10 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tree", s.tree)
 	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("GET /api/v1/docs/", s.document)
+	mux.HandleFunc("POST /api/v1/auth/setup", s.authSetup)
+	mux.HandleFunc("POST /api/v1/auth/login", s.authLogin)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.authLogout)
+	mux.HandleFunc("GET /api/v1/auth/me", s.authMe)
 	mux.HandleFunc("GET /media/", s.media)
 	mux.HandleFunc("GET /api/", http.NotFound)
 	mux.Handle("GET /", webassets.Handler())
@@ -99,7 +111,134 @@ func (s *server) ready(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.auth != nil {
+		if err := s.auth.Ready(); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+type credentialsRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+const sessionCookieName = "noteblog_session"
+
+func (s *server) authSetup(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
+		return
+	}
+	var request credentialsRequest
+	if err := decodeCredentials(w, r, &request); err != nil {
+		return
+	}
+	user, err := s.auth.Setup(strings.TrimSpace(request.Username), request.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrAlreadySetup):
+			writeError(w, http.StatusConflict, "AUTH_ALREADY_SETUP", "管理员已经初始化")
+		case errors.Is(err, auth.ErrInvalidUsername), errors.Is(err, auth.ErrInvalidPassword):
+			writeError(w, http.StatusBadRequest, "AUTH_INVALID_INPUT", "用户名或密码不符合要求")
+		default:
+			s.logger.Error("failed to initialize administrator", "error", err)
+			writeError(w, http.StatusInternalServerError, "AUTH_SETUP_FAILED", "管理员初始化失败")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"user": user})
+}
+
+func (s *server) authLogin(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
+		return
+	}
+	var request credentialsRequest
+	if err := decodeCredentials(w, r, &request); err != nil {
+		return
+	}
+	user, token, expires, err := s.auth.Login(strings.TrimSpace(request.Username), request.Password)
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			writeError(w, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "用户名或密码错误")
+			return
+		}
+		s.logger.Error("failed to log in", "error", err)
+		writeError(w, http.StatusInternalServerError, "AUTH_LOGIN_FAILED", "登录失败")
+		return
+	}
+	setSessionCookie(w, r, token, expires)
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (s *server) authLogout(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
+		return
+	}
+	if err := s.auth.Logout(readSessionCookie(r)); err != nil {
+		s.logger.Error("failed to log out", "error", err)
+		writeError(w, http.StatusInternalServerError, "AUTH_LOGOUT_FAILED", "退出登录失败")
+		return
+	}
+	clearSessionCookie(w, r)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
+}
+
+func (s *server) authMe(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
+		return
+	}
+	user, found, err := s.auth.Current(readSessionCookie(r))
+	if err != nil {
+		s.logger.Error("failed to read session", "error", err)
+		writeError(w, http.StatusInternalServerError, "AUTH_SESSION_FAILED", "无法读取登录状态")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusUnauthorized, "AUTH_UNAUTHORIZED", "请先登录")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func decodeCredentials(w http.ResponseWriter, r *http.Request, target *credentialsRequest) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, "AUTH_INVALID_JSON", "请求格式无效")
+		return err
+	}
+	if decoder.Decode(&struct{}{}) == nil {
+		writeError(w, http.StatusBadRequest, "AUTH_INVALID_JSON", "请求格式无效")
+		return errors.New("request contains multiple JSON values")
+	}
+	return nil
+}
+
+func readSessionCookie(r *http.Request) string {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
+	w.Header().Add("Set-Cookie", (&http.Cookie{Name: sessionCookieName, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: requestIsSecure(r), Expires: expires, MaxAge: int(time.Until(expires).Seconds())}).String())
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Set-Cookie", (&http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: requestIsSecure(r), MaxAge: -1, Expires: time.Unix(1, 0)}).String())
+}
+
+func requestIsSecure(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 func (s *server) site(w http.ResponseWriter, r *http.Request) {

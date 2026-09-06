@@ -82,6 +82,13 @@ func TestContentAPI(t *testing.T) {
 	if documentResponse.Header().Get("ETag") == "" {
 		t.Fatal("document response must include ETag")
 	}
+	documentNotModified := httptest.NewRecorder()
+	documentConditionalRequest := httptest.NewRequest("GET", "/api/v1/docs/welcome.md", nil)
+	documentConditionalRequest.Header.Set("If-None-Match", documentResponse.Header().Get("ETag"))
+	handler.ServeHTTP(documentNotModified, documentConditionalRequest)
+	if documentNotModified.Code != 304 || documentNotModified.Body.Len() != 0 {
+		t.Fatalf("document conditional response = %d %q, want 304 without body", documentNotModified.Code, documentNotModified.Body.String())
+	}
 
 	missingResponse := httptest.NewRecorder()
 	handler.ServeHTTP(missingResponse, httptest.NewRequest("GET", "/api/v1/docs/missing.md", nil))
@@ -93,6 +100,13 @@ func TestContentAPI(t *testing.T) {
 	handler.ServeHTTP(mediaResponse, httptest.NewRequest("GET", "/media/logo.png", nil))
 	if mediaResponse.Code != 200 || mediaResponse.Body.String() != "png-data" || mediaResponse.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("media response = %d %q %q", mediaResponse.Code, mediaResponse.Body.String(), mediaResponse.Header().Get("Content-Type"))
+	}
+	mediaNotModified := httptest.NewRecorder()
+	mediaConditionalRequest := httptest.NewRequest("GET", "/media/logo.png", nil)
+	mediaConditionalRequest.Header.Set("If-None-Match", mediaResponse.Header().Get("ETag"))
+	handler.ServeHTTP(mediaNotModified, mediaConditionalRequest)
+	if mediaNotModified.Code != 304 || mediaNotModified.Body.Len() != 0 {
+		t.Fatalf("media conditional response = %d %q, want 304 without body", mediaNotModified.Code, mediaNotModified.Body.String())
 	}
 
 	attachmentResponse := httptest.NewRecorder()

@@ -9,6 +9,7 @@ import (
 
 func TestStoreBuildsDeterministicPublicTree(t *testing.T) {
 	root := t.TempDir()
+	writeFile(t, root, "guides/_category.yml", "title: 使用指南\norder: 5\ncollapsed: true\n")
 	writeFile(t, root, "guides/advanced.md", `---
 title: 高级用法
 order: 20
@@ -31,8 +32,8 @@ tags: [Go, Docker]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tree) != 1 || tree[0].Title != "guides" {
-		t.Fatalf("tree = %#v, want one guides category", tree)
+	if len(tree) != 1 || tree[0].Title != "使用指南" || !tree[0].Collapsed {
+		t.Fatalf("tree = %#v, want category metadata", tree)
 	}
 	children := tree[0].Children
 	if len(children) != 2 || children[0].Title != "入门" || children[1].Title != "高级用法" {

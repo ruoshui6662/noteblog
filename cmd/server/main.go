@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -140,7 +141,13 @@ func (s *server) document(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "DOCUMENT_NOT_FOUND", "文档不存在")
 		return
 	}
-	w.Header().Set("ETag", `"`+document.Hash+`"`)
+	etag := `"` + document.Hash + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache")
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	writeJSON(w, http.StatusOK, document)
 }
 
@@ -187,6 +194,12 @@ func (s *server) media(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-cache")
+	etag := fmt.Sprintf("\"%x-%x\"", info.Size(), info.ModTime().UnixNano())
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	if isInlineImage(mediaPath) {
 		if contentType := mime.TypeByExtension(filepath.Ext(mediaPath)); contentType != "" {
 			w.Header().Set("Content-Type", contentType)
@@ -205,6 +218,16 @@ func isInlineImage(path string) bool {
 	default:
 		return false
 	}
+}
+
+func etagMatches(header, etag string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == etag || strings.TrimPrefix(candidate, "W/") == strings.TrimPrefix(etag, "W/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) logContentIssues() {

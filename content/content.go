@@ -48,10 +48,11 @@ type Document struct {
 }
 
 type Node struct {
-	Kind     string `json:"kind"`
-	Path     string `json:"path"`
-	Title    string `json:"title"`
-	Children []Node `json:"children,omitempty"`
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	Title     string `json:"title"`
+	Collapsed bool   `json:"collapsed,omitempty"`
+	Children  []Node `json:"children,omitempty"`
 }
 
 type Issue struct {
@@ -114,11 +115,13 @@ func (s *Store) Tree() ([]Node, error) {
 			categoryPath := strings.Join(parts[:index+1], "/")
 			child := current.find(categoryPath)
 			if child == nil {
+				metadata := readCategoryMetadata(s.root, categoryPath)
 				child = &treeNode{node: Node{
-					Kind:  "category",
-					Path:  categoryPath,
-					Title: titleFromFilename(part),
-				}}
+					Kind:      "category",
+					Path:      categoryPath,
+					Title:     firstNonEmpty(metadata.Title, titleFromFilename(part)),
+					Collapsed: metadata.Collapsed,
+				}, order: metadata.Order}
 				current.children = append(current.children, child)
 			}
 			current = child
@@ -250,6 +253,34 @@ type frontMatter struct {
 	Draft       bool     `yaml:"draft"`
 	Tags        []string `yaml:"tags"`
 	Slug        string   `yaml:"slug"`
+}
+
+type categoryMetadata struct {
+	Title     string `yaml:"title"`
+	Order     int    `yaml:"order"`
+	Collapsed bool   `yaml:"collapsed"`
+}
+
+func readCategoryMetadata(root, categoryPath string) categoryMetadata {
+	metadata := categoryMetadata{}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(categoryPath), "_category.yml"))
+	if err != nil {
+		return metadata
+	}
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		return categoryMetadata{}
+	}
+	metadata.Title = strings.TrimSpace(metadata.Title)
+	return metadata
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func scan(root string) (map[string]Document, []Issue, error) {

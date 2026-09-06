@@ -1,6 +1,6 @@
 services:
   docs:
-    image: ${DOCS_IMAGE:?Set DOCS_IMAGE in .env to your GHCR image}
+    image: ghcr.io/ruoshui6662/noteblog:edge
     restart: unless-stopped
     ports:
       - "${DOCS_PORT:-8080}:8080"

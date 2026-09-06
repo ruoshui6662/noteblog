@@ -45,14 +45,13 @@ docker login ghcr.io -u YOUR_NAME
 
 ## 3. 飞牛 Compose 安装
 
-将 `deploy/compose.yaml` 和 `deploy/.env.example` 放入飞牛上的同一项目目录，将后者复制为 `.env`，填写实际镜像：
+将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 已直接使用本仓库的公开镜像，`.env` 只需设置对外端口：
 
 ```dotenv
-DOCS_IMAGE=ghcr.io/your-name/your-repository:edge
 DOCS_PORT=8080
 ```
 
-在飞牛 Docker 项目管理中导入该 Compose，并确保项目读取同目录 `.env`。如果界面不读取 `.env`，直接把 Compose 的 `image:` 替换为实际镜像，把端口改为 `"8080:8080"`。
+在飞牛 Docker 项目管理中导入该 Compose，并确保项目读取同目录 `.env`。如果界面不读取 `.env`，可直接使用 Compose 中的默认端口 `8080:8080`。
 
 也可在该目录执行：
 
@@ -85,7 +84,7 @@ docker compose pull
 docker compose up -d
 ```
 
-更新前备份完整数据卷。为了可重复测试或回退，将 DOCS_IMAGE 固定为 Actions 摘要中的 SHA 标签或 `ghcr.io/用户名/仓库名@sha256:实际摘要`，不要一直依赖会变化的 edge。
+更新前备份完整数据卷。生产环境如需固定版本，可将 Compose 中的 `image` 改为 Actions 提供的 SHA 标签或 digest；日常更新使用 `edge` 即可。
 
 ## 5. 本机有 Docker 时
 
@@ -93,7 +92,7 @@ docker compose up -d
 docker build -t markdown-docs:local .
 ```
 
-然后在 deploy 目录创建 `.env`，设置 `DOCS_IMAGE=markdown-docs:local`，执行 `docker compose up -d`。Linux/WSL/Git Bash 可运行 `bash scripts/smoke-docker.sh markdown-docs:local`，脚本只创建并清理自身的临时测试容器与卷。
+然后在 deploy 目录临时将 Compose 中的 `image` 改为 `markdown-docs:local`，执行 `docker compose up -d`。Linux/WSL/Git Bash 可运行 `bash scripts/smoke-docker.sh markdown-docs:local`，脚本只创建并清理自身的临时测试容器与卷。
 
 生产 Go 构建需要先在 web 目录运行 `npm ci` 和 `npm run build`，再在根目录运行 `go build -buildvcs=false -tags production -o bin/markdown-docs ./cmd/server`。普通 `go run ./cmd/server` 保留 Vite 开发模式。
 

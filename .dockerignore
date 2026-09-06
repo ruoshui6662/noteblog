@@ -1,8 +1,11 @@
 *
 !Dockerfile
 !go.mod
+!go.sum
 !cmd/
 !cmd/**
+!content/
+!content/**
 !web/
 !web/**
 web/node_modules

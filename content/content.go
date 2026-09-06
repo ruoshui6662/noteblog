@@ -14,6 +14,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -330,6 +331,7 @@ func parseDocument(relativePath string, data []byte) (Document, error) {
 }
 
 func plainText(body []byte) string {
+	htmlLine := regexp.MustCompile(`<[^>]*>`)
 	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
 	var output []string
 	insideFence := false
@@ -342,7 +344,11 @@ func plainText(body []byte) string {
 		if insideFence {
 			continue
 		}
+		if strings.Contains(trimmed, "<") && strings.Contains(trimmed, ">") {
+			continue
+		}
 		trimmed = strings.TrimLeft(trimmed, "# >-+*0123456789.\t")
+		trimmed = htmlLine.ReplaceAllString(trimmed, " ")
 		trimmed = strings.ReplaceAll(trimmed, "![", "[")
 		trimmed = strings.ReplaceAll(trimmed, "[", "")
 		trimmed = strings.ReplaceAll(trimmed, "]", "")

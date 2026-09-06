@@ -101,6 +101,11 @@ func TestSearchUsesPublicIndexAndWeightsTitle(t *testing.T) {
 	if err != nil || len(results) != 0 {
 		t.Fatalf("blank search = %#v err=%v", results, err)
 	}
+	writeFile(t, root, "guides/unsafe.md", "# 公共文档\n\n<script>alert('secret')</script>\n")
+	results, err = NewStore(root).Search("secret")
+	if err != nil || len(results) != 0 {
+		t.Fatalf("raw HTML search = %#v err=%v, want no hidden content", results, err)
+	}
 }
 
 func writeFile(t *testing.T, root, name, body string) {

@@ -82,4 +82,10 @@ func TestContentAPI(t *testing.T) {
 	if missingResponse.Code != 404 {
 		t.Fatalf("missing document status = %d, want 404", missingResponse.Code)
 	}
+
+	searchResponse := httptest.NewRecorder()
+	handler.ServeHTTP(searchResponse, httptest.NewRequest("GET", "/api/v1/search?q=欢迎", nil))
+	if searchResponse.Code != 200 || !strings.Contains(searchResponse.Body.String(), "welcome.md") {
+		t.Fatalf("search response = %d %s", searchResponse.Code, searchResponse.Body.String())
+	}
 }

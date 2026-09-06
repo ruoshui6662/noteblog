@@ -43,6 +43,7 @@ type Document struct {
 	Headings    []Heading `json:"headings,omitempty"`
 	Draft       bool      `json:"-"`
 	order       int
+	searchText  string
 }
 
 type Node struct {
@@ -55,6 +56,14 @@ type Node struct {
 type Issue struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
+}
+
+type SearchResult struct {
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Snippet     string `json:"snippet"`
+	score       int
 }
 
 type Store struct {
@@ -139,6 +148,61 @@ func (s *Store) Document(relativePath string) (Document, bool, error) {
 	doc, ok := s.docs[clean]
 	s.mu.RUnlock()
 	return doc, ok, nil
+}
+
+func (s *Store) Search(query string) ([]SearchResult, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return []SearchResult{}, nil
+	}
+	if err := s.Refresh(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	results := make([]SearchResult, 0)
+	for _, doc := range s.docs {
+		score := 0
+		if strings.Contains(strings.ToLower(doc.Title), query) {
+			score += 8
+		}
+		for _, tag := range doc.Tags {
+			if strings.Contains(strings.ToLower(tag), query) {
+				score += 6
+			}
+		}
+		for _, heading := range doc.Headings {
+			if strings.Contains(strings.ToLower(heading.Text), query) {
+				score += 4
+			}
+		}
+		if strings.Contains(strings.ToLower(doc.Description), query) {
+			score += 3
+		}
+		if strings.Contains(strings.ToLower(doc.searchText), query) {
+			score++
+		}
+		if score == 0 {
+			continue
+		}
+		results = append(results, SearchResult{
+			Path:        doc.Path,
+			Title:       doc.Title,
+			Description: doc.Description,
+			Snippet:     snippet(doc.searchText, query),
+			score:       score,
+		})
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].score != results[j].score {
+			return results[i].score > results[j].score
+		}
+		return strings.ToLower(results[i].Title) < strings.ToLower(results[j].Title)
+	})
+	if len(results) > 20 {
+		results = results[:20]
+	}
+	return results, nil
 }
 
 type treeNode struct {
@@ -261,7 +325,66 @@ func parseDocument(relativePath string, data []byte) (Document, error) {
 		Headings:    headings,
 		Draft:       metadata.Draft,
 		order:       metadata.Order,
+		searchText:  plainText(body),
 	}, nil
+}
+
+func plainText(body []byte) string {
+	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
+	var output []string
+	insideFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			insideFence = !insideFence
+			continue
+		}
+		if insideFence {
+			continue
+		}
+		trimmed = strings.TrimLeft(trimmed, "# >-+*0123456789.\t")
+		trimmed = strings.ReplaceAll(trimmed, "![", "[")
+		trimmed = strings.ReplaceAll(trimmed, "[", "")
+		trimmed = strings.ReplaceAll(trimmed, "]", "")
+		trimmed = strings.ReplaceAll(trimmed, "(`", " ")
+		trimmed = strings.ReplaceAll(trimmed, "`", "")
+		if trimmed != "" {
+			output = append(output, trimmed)
+		}
+	}
+	return strings.Join(output, " ")
+}
+
+func snippet(text, query string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	index := strings.Index(lower, query)
+	if index < 0 {
+		if len([]rune(text)) > 120 {
+			return string([]rune(text)[:120]) + "…"
+		}
+		return text
+	}
+	runes := []rune(text)
+	start := len([]rune(text[:index])) - 40
+	if start < 0 {
+		start = 0
+	}
+	end := start + 120
+	if end > len(runes) {
+		end = len(runes)
+	}
+	result := string(runes[start:end])
+	if start > 0 {
+		result = "…" + result
+	}
+	if end < len(runes) {
+		result += "…"
+	}
+	return result
 }
 
 func parseFrontMatter(data []byte) (frontMatter, []byte, error) {

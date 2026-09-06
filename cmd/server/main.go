@@ -76,6 +76,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /api/v1/site", s.site)
 	mux.HandleFunc("GET /api/v1/tree", s.tree)
+	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("GET /api/v1/docs/", s.document)
 	mux.HandleFunc("GET /api/", http.NotFound)
 	mux.Handle("GET /", webassets.Handler())
@@ -138,6 +139,26 @@ func (s *server) document(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", `"`+document.Hash+`"`)
 	writeJSON(w, http.StatusOK, document)
+}
+
+func (s *server) search(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONTENT_UNAVAILABLE", "内容服务未初始化")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(query)) > 100 {
+		writeError(w, http.StatusBadRequest, "SEARCH_QUERY_TOO_LONG", "搜索词过长")
+		return
+	}
+	results, err := s.store.Search(query)
+	if err != nil {
+		s.logger.Error("failed to search content", "error", err)
+		writeError(w, http.StatusInternalServerError, "CONTENT_SCAN_FAILED", "无法搜索文档")
+		return
+	}
+	s.logContentIssues()
+	writeJSON(w, http.StatusOK, results)
 }
 
 func (s *server) logContentIssues() {

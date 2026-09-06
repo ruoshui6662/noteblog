@@ -28,11 +28,23 @@ type Document = {
   headings?: Heading[];
 };
 
+type SearchResult = {
+  path: string;
+  title: string;
+  description?: string;
+  snippet: string;
+};
+
 const site = ref<Site | null>(null);
 const tree = ref<TreeNode[]>([]);
 const currentDocument = ref<Document | null>(null);
 const status = ref<"loading" | "ready" | "empty" | "error">("loading");
 const errorMessage = ref("");
+const searchQuery = ref("");
+const searchResults = ref<SearchResult[]>([]);
+const searchStatus = ref<"idle" | "loading" | "ready" | "error">("idle");
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let searchRequest = 0;
 
 const flattenedTree = computed(() => {
   const result: Array<TreeNode & { depth: number }> = [];
@@ -98,11 +110,51 @@ async function loadDocument(path: string | null, replace = false) {
 }
 
 async function selectDocument(path: string) {
-  await loadDocument(path);
+	searchQuery.value = "";
+	searchResults.value = [];
+	searchStatus.value = "idle";
+	await loadDocument(path);
   if (status.value === "ready") {
     window.history.pushState({}, "", documentURL(path));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+}
+
+function queueSearch() {
+	if (searchTimer) clearTimeout(searchTimer);
+	const query = searchQuery.value.trim();
+	if (!query) {
+		searchResults.value = [];
+		searchStatus.value = "idle";
+		return;
+	}
+	searchTimer = setTimeout(() => void runSearch(query), 180);
+}
+
+async function runSearch(query = searchQuery.value.trim()) {
+	if (!query) return;
+	const request = ++searchRequest;
+	searchStatus.value = "loading";
+	try {
+		const response = await fetch(`/api/v1/search?q=${encodeURIComponent(query)}`);
+		if (!response.ok) throw new Error("搜索失败");
+		const results = (await response.json()) as SearchResult[];
+		if (request !== searchRequest) return;
+		searchResults.value = results;
+		searchStatus.value = "ready";
+	} catch (error) {
+		if (request !== searchRequest) return;
+		searchStatus.value = "error";
+		errorMessage.value = error instanceof Error ? error.message : "搜索失败";
+	}
+}
+
+async function goHome() {
+	searchQuery.value = "";
+	searchResults.value = [];
+	searchStatus.value = "idle";
+	window.history.pushState({}, "", "/");
+	await loadApp();
 }
 
 async function loadApp() {
@@ -127,7 +179,11 @@ async function loadApp() {
 }
 
 function handlePopState() {
-  void loadDocument(routeDocumentPath());
+	if (routeDocumentPath()) {
+		void loadDocument(routeDocumentPath());
+	} else {
+		void loadApp();
+	}
 }
 
 onMounted(() => {
@@ -135,14 +191,17 @@ onMounted(() => {
   void loadApp();
 });
 
-onBeforeUnmount(() => window.removeEventListener("popstate", handlePopState));
+onBeforeUnmount(() => {
+	window.removeEventListener("popstate", handlePopState);
+	if (searchTimer) clearTimeout(searchTimer);
+});
 </script>
 
 <template>
   <div class="app-shell">
     <header class="app-header">
       <div class="app-header__inner">
-        <a class="brand" href="/" aria-label="返回文档首页" @click.prevent="loadApp">
+        <a class="brand" href="/" aria-label="返回文档首页" @click.prevent="goHome">
           <span class="brand__mark" aria-hidden="true">M</span>
           <span>{{ site?.name ?? "Markdown 文档库" }}</span>
         </a>
@@ -153,7 +212,33 @@ onBeforeUnmount(() => window.removeEventListener("popstate", handlePopState));
     <div class="docs-layout">
       <aside class="sidebar" aria-label="文档导航">
         <p class="sidebar__label">文档导航</p>
-        <nav v-if="flattenedTree.length" class="tree" aria-label="公开文档">
+        <form class="search-form" role="search" @submit.prevent="runSearch()">
+          <label class="sr-only" for="document-search">搜索文档</label>
+          <input
+            id="document-search"
+            v-model="searchQuery"
+            type="search"
+            placeholder="搜索文档"
+            autocomplete="off"
+            @input="queueSearch"
+          >
+        </form>
+        <p v-if="searchStatus === 'loading'" class="search-status" role="status">搜索中…</p>
+        <p v-else-if="searchStatus === 'error'" class="search-status search-status--error" role="alert">{{ errorMessage }}</p>
+        <nav v-else-if="searchQuery.trim()" class="tree" aria-label="搜索结果">
+          <a
+            v-for="result in searchResults"
+            :key="result.path"
+            class="tree-item tree-item--document search-result"
+            :href="documentURL(result.path)"
+            @click.prevent="selectDocument(result.path)"
+          >
+            <strong>{{ result.title }}</strong>
+            <span>{{ result.snippet || result.description || result.path }}</span>
+          </a>
+          <p v-if="searchStatus === 'ready' && !searchResults.length" class="sidebar__empty">没有匹配文档</p>
+        </nav>
+        <nav v-else-if="flattenedTree.length" class="tree" aria-label="公开文档">
           <template v-for="node in flattenedTree" :key="`${node.kind}:${node.path}`">
             <p
               v-if="node.kind === 'category'"

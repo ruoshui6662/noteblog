@@ -81,6 +81,28 @@ func TestMalformedDocumentIsExcludedAndReported(t *testing.T) {
 	}
 }
 
+func TestSearchUsesPublicIndexAndWeightsTitle(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "guides/title.md", "---\ntitle: Docker 入门\ntags: [容器]\n---\n# 安装\n\n介绍 Docker。\n")
+	writeFile(t, root, "guides/body.md", "# 运行环境\n\nDocker 出现在正文中。\n")
+	writeFile(t, root, "guides/draft.md", "---\ndraft: true\n---\n# Docker 草稿\n")
+
+	results, err := NewStore(root).Search("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Path != "guides/title.md" {
+		t.Fatalf("results = %#v, want title match first and draft excluded", results)
+	}
+	if results[0].Snippet == "" || !strings.Contains(strings.ToLower(results[0].Snippet), "docker") {
+		t.Fatalf("snippet = %q", results[0].Snippet)
+	}
+	results, err = NewStore(root).Search(" ")
+	if err != nil || len(results) != 0 {
+		t.Fatalf("blank search = %#v err=%v", results, err)
+	}
+}
+
 func writeFile(t *testing.T, root, name, body string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

@@ -45,13 +45,9 @@ docker login ghcr.io -u YOUR_NAME
 
 ## 3. 飞牛 Compose 安装
 
-将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 已直接使用本仓库的公开镜像，`.env` 只需设置对外端口：
+将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 已直接写入本仓库的公开镜像和 `8080:8080` 端口映射，不需要 `.env` 文件。
 
-```dotenv
-DOCS_PORT=8080
-```
-
-在飞牛 Docker 项目管理中导入该 Compose，并确保项目读取同目录 `.env`。如果界面不读取 `.env`，可直接使用 Compose 中的默认端口 `8080:8080`。
+在飞牛 Docker 项目管理中导入该 Compose 即可。
 
 也可在该目录执行：
 
@@ -63,7 +59,7 @@ docker compose ps
 docker compose logs --tail=100
 ```
 
-访问 `http://飞牛IP:8080`，应显示工程基线页面和“服务已就绪：container 环境”。端口被占用时修改 `.env` 中 DOCS_PORT，容器内部仍使用 8080。
+访问 `http://飞牛IP:8080`，应显示工程基线页面和“服务已就绪：container 环境”。
 
 默认采用命名卷，避免 NAS 绑定目录初始权限问题。镜像以 UID/GID `10001:10001` 运行，根文件系统只读，只有数据卷可写。不要执行 `docker compose down -v`，该选项会删除命名卷。更换 Compose 项目名会使用新的卷，迁移时应保留项目名或显式配置已有卷。
 

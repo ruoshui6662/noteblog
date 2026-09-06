@@ -49,16 +49,9 @@ func main() {
 	}
 
 	app := &server{config: cfg, logger: logger}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", app.health)
-	mux.HandleFunc("GET /readyz", app.ready)
-	mux.HandleFunc("GET /api/v1/site", app.site)
-	mux.HandleFunc("/api/", http.NotFound)
-	mux.Handle("GET /", webassets.Handler())
-
 	httpServer := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           app.withRequestLog(mux),
+		Handler:           app.withRequestLog(app.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
@@ -68,6 +61,16 @@ func main() {
 		logger.Error("server stopped unexpectedly", "error", err)
 		os.Exit(1)
 	}
+}
+
+func (s *server) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /readyz", s.ready)
+	mux.HandleFunc("GET /api/v1/site", s.site)
+	mux.HandleFunc("GET /api/", http.NotFound)
+	mux.Handle("GET /", webassets.Handler())
+	return mux
 }
 
 func (s *server) health(w http.ResponseWriter, r *http.Request) {

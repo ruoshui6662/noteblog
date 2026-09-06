@@ -95,6 +95,6 @@ docker build -t markdown-docs:local .
 
 然后在 deploy 目录创建 `.env`，设置 `DOCS_IMAGE=markdown-docs:local`，执行 `docker compose up -d`。Linux/WSL/Git Bash 可运行 `bash scripts/smoke-docker.sh markdown-docs:local`，脚本只创建并清理自身的临时测试容器与卷。
 
-生产 Go 构建需要先在 web 目录运行 `npm ci` 和 `npm run build`，再在根目录运行 `go build -tags production -o bin/markdown-docs ./cmd/server`。普通 `go run ./cmd/server` 保留 Vite 开发模式。
+生产 Go 构建需要先在 web 目录运行 `npm ci` 和 `npm run build`，再在根目录运行 `go build -buildvcs=false -tags production -o bin/markdown-docs ./cmd/server`。普通 `go run ./cmd/server` 保留 Vite 开发模式。
 
 参考：[Docker 多架构工作流](https://docs.docker.com/build/ci/github-actions/multi-platform/)、[GitHub 镜像发布](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)、[GHCR 访问权限](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。

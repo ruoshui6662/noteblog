@@ -3,6 +3,15 @@ set -euo pipefail
 image="${1:-markdown-docs:local}"
 name="markdown-docs-smoke-${RANDOM}-$$"
 volume="${name}-data"
+annotate_failure() {
+  local message="$1"
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    message="${message//'%'/'%25'}"
+    message="${message//$'\n'/'%0A'}"
+    message="${message//$'\r'/'%0D'}"
+    echo "::error file=scripts/smoke-docker.sh,line=1::$message"
+  fi
+}
 cleanup() {
   docker logs "$name" 2>/dev/null || true
   docker rm -f "$name" >/dev/null 2>&1 || true
@@ -20,7 +29,10 @@ start() {
     fi
     sleep 1
   done
-  echo 'Container did not become ready' >&2
+  details="$(docker inspect "$name" --format 'state={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>&1 || true)"
+  logs="$(docker logs --tail=80 "$name" 2>&1 || true)"
+  annotate_failure "Container did not become ready. ${details}. Logs: ${logs}"
+  echo "Container did not become ready. ${details}" >&2
   return 1
 }
 start

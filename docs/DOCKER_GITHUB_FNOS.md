@@ -1,0 +1,100 @@
+# Docker → GitHub Actions → 飞牛测试
+
+当前镜像是 M0 工程基线测试包：包含前端页面、站点信息 API、健康检查和数据目录初始化。尚未提供 Markdown 阅读、登录、上传或管理功能。此打包工作不表示 M1–M4 产品里程碑已全部完成。
+
+## 1. 上传到 GitHub
+
+新建空 GitHub 仓库，建议使用简单英文仓库名，例如 `markdown-docs`。本目录尚未初始化 Git。将下面地址替换成自己的仓库地址，在项目根目录运行：
+
+```powershell
+git init -b main
+git add .
+git diff --cached --stat
+git commit -m "build: prepare Docker image and GHCR workflow"
+git remote add origin https://github.com/YOUR_NAME/YOUR_REPOSITORY.git
+git push -u origin main
+```
+
+如果上传网页文件，必须包含隐藏目录 `.github/workflows/`、`.dockerignore` 和 `web/package-lock.json`；不要上传 `web/node_modules`、`web/dist`、`var` 或本地 `.env`。推荐 Git 推送，避免漏掉隐藏文件。
+
+仓库 Actions 页面查看 `Build and publish image`。工作流使用内置 `GITHUB_TOKEN`，不需要手动添加个人访问令牌；仓库或组织策略必须允许 Actions 写入 Packages。
+
+工作流行为：
+
+| 触发 | 行为 |
+|---|---|
+| PR 到 main/master | 构建 AMD64，运行 Go 检查、前端构建、容器冒烟和数据保留测试，不推送 |
+| main/master 推送 | 检查成功后发布双架构 `edge` 和 `sha-完整提交SHA` |
+| `v0.0.1-test.1` 等预发布标签 | 发布对应预发布版本和 SHA 标签 |
+| `v0.1.0` 等正式版本标签 | 发布 `0.1.0`、`0.1` 和 SHA 标签 |
+| 手动 Run workflow | 检查后发布所选分支/标签；仅 main/master 更新 edge |
+
+当前测试阶段不生成 `latest`。发布成功后，Actions 运行摘要给出实际镜像标签和 digest，可直接复制。镜像名自动转换为小写：`ghcr.io/用户名/仓库名:edge`。生产构建在 Linux 完成，不依赖 Windows 本机 Go/Docker。
+
+## 2. 让飞牛可以拉取
+
+首次发布后进入 GitHub 用户或组织的 Packages，打开该镜像的 Package settings。若要匿名拉取，将包的可见性设置为 Public；源码仓库公开不代表镜像包自动公开。
+
+若保持包私有，在飞牛的镜像仓库凭据或终端配置 GHCR 登录，使用有 `read:packages` 权限的 classic PAT，并确保账户有包访问权限：
+
+```sh
+docker login ghcr.io -u YOUR_NAME
+```
+
+在密码提示中输入令牌，不要把令牌写入 Compose 或提交到仓库。
+
+## 3. 飞牛 Compose 安装
+
+将 `deploy/compose.yaml` 和 `deploy/.env.example` 放入飞牛上的同一项目目录，将后者复制为 `.env`，填写实际镜像：
+
+```dotenv
+DOCS_IMAGE=ghcr.io/your-name/your-repository:edge
+DOCS_PORT=8080
+```
+
+在飞牛 Docker 项目管理中导入该 Compose，并确保项目读取同目录 `.env`。如果界面不读取 `.env`，直接把 Compose 的 `image:` 替换为实际镜像，把端口改为 `"8080:8080"`。
+
+也可在该目录执行：
+
+```sh
+docker compose config
+docker compose pull
+docker compose up -d
+docker compose ps
+docker compose logs --tail=100
+```
+
+访问 `http://飞牛IP:8080`，应显示工程基线页面和“服务已就绪：container 环境”。端口被占用时修改 `.env` 中 DOCS_PORT，容器内部仍使用 8080。
+
+默认采用命名卷，避免 NAS 绑定目录初始权限问题。镜像以 UID/GID `10001:10001` 运行，根文件系统只读，只有数据卷可写。不要执行 `docker compose down -v`，该选项会删除命名卷。更换 Compose 项目名会使用新的卷，迁移时应保留项目名或显式配置已有卷。
+
+如需文件管理器直接看到数据，把 `docs-data:/data` 改为专用 NAS 目录，例如 `/实际存储路径/markdown-docs/data:/data`。先创建该目录并给予 UID/GID 10001 写权限；仅对这个专用目录设置归属，不要修改整个 NAS 共享目录。实际存储路径以飞牛文件管理器显示为准。
+
+## 4. 验收与升级
+
+1. `docker compose ps` 显示 healthy。
+2. 首页加载成功，无资源 404；服务状态为 container。
+3. `/healthz` 返回 ok，`/readyz` 返回 ready，`/api/v1/site` 返回 M0。
+4. 在卷的 content 目录写入临时测试文件，执行 `docker compose down` 和 `docker compose up -d` 后文件仍存在。
+5. 查看日志无 permission denied；AMD64 和 ARM64 设备各自需要真实运行验证，工作流运行测试当前只覆盖 AMD64。
+
+更新测试镜像：
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+更新前备份完整数据卷。为了可重复测试或回退，将 DOCS_IMAGE 固定为 Actions 摘要中的 SHA 标签或 `ghcr.io/用户名/仓库名@sha256:实际摘要`，不要一直依赖会变化的 edge。
+
+## 5. 本机有 Docker 时
+
+```powershell
+docker build -t markdown-docs:local .
+```
+
+然后在 deploy 目录创建 `.env`，设置 `DOCS_IMAGE=markdown-docs:local`，执行 `docker compose up -d`。Linux/WSL/Git Bash 可运行 `bash scripts/smoke-docker.sh markdown-docs:local`，脚本只创建并清理自身的临时测试容器与卷。
+
+生产 Go 构建需要先在 web 目录运行 `npm ci` 和 `npm run build`，再在根目录运行 `go build -tags production -o bin/markdown-docs ./cmd/server`。普通 `go run ./cmd/server` 保留 Vite 开发模式。
+
+参考：[Docker 多架构工作流](https://docs.docker.com/build/ci/github-actions/multi-platform/)、[GitHub 镜像发布](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)、[GHCR 访问权限](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。

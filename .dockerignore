@@ -1,0 +1,9 @@
+*
+!Dockerfile
+!go.mod
+!cmd/
+!cmd/**
+!web/
+!web/**
+web/node_modules
+web/dist

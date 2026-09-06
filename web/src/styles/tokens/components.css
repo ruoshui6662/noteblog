@@ -1,0 +1,10 @@
+:root {
+  --header-height: 3.5rem;
+  --layout-max-width: 90rem;
+  --sidebar-width: 17.5rem;
+  --article-max-width: 48rem;
+  --toc-width: 14rem;
+  --nav-item-radius: var(--radius-md);
+  --nav-item-padding: var(--space-2) var(--space-3);
+  --focus-outline: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-focus-ring);
+}

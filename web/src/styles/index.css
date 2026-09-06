@@ -86,10 +86,10 @@ button:focus-visible,
 .admin-back-link:focus-visible { color: var(--color-primary-hover); }
 
 .admin-main {
-  display: grid;
-  min-height: 100vh;
-  place-items: center;
-  padding: calc(var(--header-height) + var(--space-8)) var(--space-4) var(--space-8);
+  min-height: calc(100vh - var(--header-height));
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: calc(var(--header-height) + var(--space-8)) clamp(1rem, 4vw, 3rem) var(--space-8);
 }
 
 .admin-card {
@@ -102,6 +102,17 @@ button:focus-visible,
   padding: var(--space-8);
 }
 
+.admin-card:not(.admin-card--workspace) {
+  margin: clamp(2rem, 12vh, 8rem) auto 0;
+}
+
+.admin-card--workspace {
+  width: 100%;
+  max-width: none;
+  min-height: calc(100vh - var(--header-height) - 4rem);
+  padding: clamp(1.5rem, 3vw, 2.5rem);
+}
+
 .admin-card__header {
   display: flex;
   align-items: flex-start;
@@ -111,8 +122,8 @@ button:focus-visible,
 
 .admin-editor {
   display: grid;
-  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
-  gap: var(--space-6);
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  gap: clamp(1.25rem, 3vw, 3rem);
   margin-top: var(--space-6);
 }
 
@@ -121,7 +132,7 @@ button:focus-visible,
   align-content: start;
   gap: var(--space-1);
   min-width: 0;
-  max-height: 32rem;
+  max-height: calc(100vh - 16rem);
   overflow-y: auto;
 }
 
@@ -183,7 +194,7 @@ button:focus-visible,
 }
 
 .admin-editor-form textarea {
-  min-height: 20rem;
+  min-height: clamp(24rem, calc(100vh - 22rem), 48rem);
   resize: vertical;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
   font-size: 0.8125rem;

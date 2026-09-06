@@ -418,7 +418,7 @@ onBeforeUnmount(() => {
       <section v-if="adminMode === 'checking'" class="admin-card" aria-live="polite">
         <p class="loading-state">正在检查登录状态…</p>
       </section>
-      <section v-else-if="adminMode === 'authenticated'" class="admin-card">
+      <section v-else-if="adminMode === 'authenticated'" class="admin-card admin-card--workspace">
         <div class="admin-card__header">
           <div>
             <p class="admin-eyebrow">管理员 · {{ adminUser?.username }}</p>

@@ -317,10 +317,10 @@ onBeforeUnmount(() => {
           <label for="admin-username">用户名</label>
           <input id="admin-username" v-model="adminUsername" autocomplete="username" required minlength="3" maxlength="64">
           <label for="admin-password">密码</label>
-          <input id="admin-password" v-model="adminPassword" type="password" autocomplete="new-password" required minlength="12">
+          <input id="admin-password" v-model="adminPassword" type="password" autocomplete="new-password" required>
           <template v-if="adminMode === 'setup'">
             <label for="admin-password-confirmation">确认密码</label>
-            <input id="admin-password-confirmation" v-model="adminPasswordConfirmation" type="password" autocomplete="new-password" required minlength="12">
+            <input id="admin-password-confirmation" v-model="adminPasswordConfirmation" type="password" autocomplete="new-password" required>
           </template>
           <p v-if="adminError" class="admin-feedback admin-feedback--error" role="alert">{{ adminError }}</p>
           <p v-if="adminMessage" class="admin-feedback" role="status">{{ adminMessage }}</p>

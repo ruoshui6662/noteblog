@@ -104,7 +104,7 @@ func (s *Store) Setup(username, password string) (User, error) {
 	if !usernamePattern.MatchString(username) {
 		return User{}, ErrInvalidUsername
 	}
-	if len([]rune(password)) < 12 {
+	if password == "" {
 		return User{}, ErrInvalidPassword
 	}
 	hash, err := hashPassword(password)

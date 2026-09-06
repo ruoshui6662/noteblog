@@ -51,17 +51,17 @@ func TestStoreValidationAndHashing(t *testing.T) {
 	if _, err := store.Setup("ab", "long enough password"); !errors.Is(err, ErrInvalidUsername) {
 		t.Fatalf("short username error = %v", err)
 	}
-	if _, err := store.Setup("admin", "short"); !errors.Is(err, ErrInvalidPassword) {
-		t.Fatalf("short password error = %v", err)
+	if _, err := store.Setup("admin", ""); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("empty password error = %v", err)
 	}
-	if _, err := store.Setup("admin", "correct horse battery staple"); err != nil {
+	if _, err := store.Setup("admin", "short"); err != nil {
 		t.Fatal(err)
 	}
 	var hash string
 	if err := store.db.QueryRow(`SELECT password_hash FROM users`).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(hash, "correct horse battery staple") || !strings.HasPrefix(hash, "$argon2id$") {
+	if strings.Contains(hash, "short") || !strings.HasPrefix(hash, "$argon2id$") {
 		t.Fatalf("stored password hash = %q", hash)
 	}
 	if _, err := store.db.Exec(`UPDATE sessions SET expires_at = ?`, time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)); err != nil && !errors.Is(err, sql.ErrNoRows) {

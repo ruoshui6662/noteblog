@@ -17,7 +17,7 @@
 
 - 新增纯 Go SQLite 存储，启动时自动迁移 `schema_migrations`、`users`、`sessions` 表。
 - 使用 Argon2id（64 MiB、3 次迭代、2 线程）保存密码哈希，并使用常量时间比较验证密码。
-- 一次性管理员初始化：用户名允许字母、数字、`_`、`.`、`-`，密码至少 12 个字符。
+- 一次性管理员初始化：用户名允许字母、数字、`_`、`.`、`-`，密码字段只要求非空，不设置长度上限或最小长度。
 - 新增接口：
   - `POST /api/v1/auth/setup`：首次创建管理员，成功返回 201，重复初始化返回 409。
   - `POST /api/v1/auth/login`：验证凭据并签发 7 天 HttpOnly、SameSite=Lax Cookie。

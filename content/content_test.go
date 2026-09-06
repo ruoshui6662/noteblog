@@ -1,6 +1,7 @@
 package content
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,47 @@ func TestStoreRejectsUnsafeDocumentPaths(t *testing.T) {
 		if _, ok, err := store.Document(path); err == nil || ok {
 			t.Fatalf("Document(%q) = ok=%v err=%v, want path error", path, ok, err)
 		}
+	}
+}
+
+func TestAdminSourceUsesAtomicVersionedWrites(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	first, err := store.CreateSource("guides/edit.md", []byte("# 第一版\n"))
+	if err != nil || first.Hash == "" {
+		t.Fatalf("CreateSource() = %#v, %v", first, err)
+	}
+	source, hash, err := store.ReadSource("guides/edit.md")
+	if err != nil || source != "# 第一版\n" || hash != first.Hash {
+		t.Fatalf("ReadSource() = %q %q %v", source, hash, err)
+	}
+	if _, err := store.UpdateSource("guides/edit.md", []byte("# 错误版本\n"), "stale"); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("stale update error = %v", err)
+	}
+	second, err := store.UpdateSource("guides/edit.md", []byte("# 第二版\n"), hash)
+	if err != nil || second.Hash == first.Hash {
+		t.Fatalf("UpdateSource() = %#v, %v", second, err)
+	}
+	if err := store.DeleteSource("guides/edit.md", hash); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("stale delete error = %v", err)
+	}
+	if err := store.DeleteSource("guides/edit.md", second.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ReadSource("guides/edit.md"); !errors.Is(err, ErrDocumentNotFound) {
+		t.Fatalf("deleted source error = %v", err)
+	}
+}
+
+func TestAdminDocumentsIncludesDraftsAndSourcePaths(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "drafts/example.md", "---\ndraft: true\nslug: public-example.md\n---\n# 草稿\n")
+	documents, err := NewStore(root).AdminDocuments()
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("AdminDocuments() = %#v, %v", documents, err)
+	}
+	if documents[0].Path != "drafts/example.md" || !documents[0].Draft {
+		t.Fatalf("admin document = %#v", documents[0])
 	}
 }
 

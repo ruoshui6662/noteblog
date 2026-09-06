@@ -89,6 +89,11 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tree", s.tree)
 	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("GET /api/v1/docs/", s.document)
+	mux.HandleFunc("GET /api/v1/admin/docs", s.adminDocuments)
+	mux.HandleFunc("POST /api/v1/admin/docs", s.adminCreateDocument)
+	mux.HandleFunc("GET /api/v1/admin/docs/", s.adminDocument)
+	mux.HandleFunc("PUT /api/v1/admin/docs/", s.adminUpdateDocument)
+	mux.HandleFunc("DELETE /api/v1/admin/docs/", s.adminDeleteDocument)
 	mux.HandleFunc("POST /api/v1/auth/setup", s.authSetup)
 	mux.HandleFunc("POST /api/v1/auth/login", s.authLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.authLogout)
@@ -213,6 +218,176 @@ func (s *server) authMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
 }
 
+type adminDocumentWriteRequest struct {
+	Path         string `json:"path"`
+	Content      string `json:"content"`
+	ExpectedHash string `json:"expected_hash"`
+}
+
+type adminDocumentSummary struct {
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Hash        string `json:"hash"`
+	Draft       bool   `json:"draft"`
+}
+
+func (s *server) requireAdmin(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
+		return auth.User{}, false
+	}
+	user, found, err := s.auth.Current(readSessionCookie(r))
+	if err != nil {
+		s.logger.Error("failed to read admin session", "error", err)
+		writeError(w, http.StatusInternalServerError, "AUTH_SESSION_FAILED", "无法读取登录状态")
+		return auth.User{}, false
+	}
+	if !found {
+		writeError(w, http.StatusUnauthorized, "AUTH_UNAUTHORIZED", "请先登录")
+		return auth.User{}, false
+	}
+	return user, true
+}
+
+func (s *server) adminDocuments(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	documents, err := s.store.AdminDocuments()
+	if err != nil {
+		s.logger.Error("failed to list admin documents", "error", err)
+		writeError(w, http.StatusInternalServerError, "CONTENT_SCAN_FAILED", "无法读取文档列表")
+		return
+	}
+	result := make([]adminDocumentSummary, 0, len(documents))
+	for _, document := range documents {
+		result = append(result, adminDocumentSummary{Path: document.Path, Title: document.Title, Description: document.Description, Hash: document.Hash, Draft: document.Draft})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) adminDocument(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/docs/")
+	source, hash, err := s.store.ReadSource(path)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	w.Header().Set("ETag", `"`+hash+`"`)
+	writeJSON(w, http.StatusOK, map[string]string{"path": path, "content": source, "hash": hash})
+}
+
+func (s *server) adminCreateDocument(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	var request adminDocumentWriteRequest
+	if err := decodeDocumentWrite(w, r, &request); err != nil {
+		return
+	}
+	if strings.TrimSpace(request.Path) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT_PATH", "文档路径不能为空")
+		return
+	}
+	document, err := s.store.CreateSource(request.Path, []byte(request.Content))
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	setDocumentETag(w, document.Hash)
+	writeJSON(w, http.StatusCreated, document)
+}
+
+func (s *server) adminUpdateDocument(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/docs/")
+	var request adminDocumentWriteRequest
+	if err := decodeDocumentWrite(w, r, &request); err != nil {
+		return
+	}
+	expectedHash := requestExpectedHash(r, request.ExpectedHash)
+	if expectedHash == "" {
+		writeError(w, http.StatusPreconditionRequired, "VERSION_REQUIRED", "更新文档必须提供 If-Match 版本")
+		return
+	}
+	document, err := s.store.UpdateSource(path, []byte(request.Content), expectedHash)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	setDocumentETag(w, document.Hash)
+	writeJSON(w, http.StatusOK, document)
+}
+
+func (s *server) adminDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/docs/")
+	expectedHash := requestExpectedHash(r, "")
+	if expectedHash == "" {
+		writeError(w, http.StatusPreconditionRequired, "VERSION_REQUIRED", "删除文档必须提供 If-Match 版本")
+		return
+	}
+	if err := s.store.DeleteSource(path, expectedHash); err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "path": path})
+}
+
+func decodeDocumentWrite(w http.ResponseWriter, r *http.Request, target *adminDocumentWriteRequest) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT_JSON", "文档请求格式无效")
+		return err
+	}
+	if decoder.Decode(&struct{}{}) == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT_JSON", "文档请求格式无效")
+		return errors.New("request contains multiple JSON values")
+	}
+	return nil
+}
+
+func requestExpectedHash(r *http.Request, fallback string) string {
+	value := strings.TrimSpace(r.Header.Get("If-Match"))
+	if value == "" {
+		value = strings.TrimSpace(fallback)
+	}
+	if value == "*" {
+		return value
+	}
+	value = strings.TrimPrefix(value, "W/")
+	return strings.Trim(value, `"`)
+}
+
+func setDocumentETag(w http.ResponseWriter, hash string) {
+	w.Header().Set("ETag", `"`+hash+`"`)
+	w.Header().Set("Cache-Control", "no-cache")
+}
+
+func writeDocumentError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, content.ErrDocumentNotFound):
+		writeError(w, http.StatusNotFound, "DOCUMENT_NOT_FOUND", "文档不存在")
+	case errors.Is(err, content.ErrDocumentExists):
+		writeError(w, http.StatusConflict, "DOCUMENT_EXISTS", "文档已经存在")
+	case errors.Is(err, content.ErrVersionConflict):
+		writeError(w, http.StatusConflict, "DOCUMENT_VERSION_CONFLICT", "文档已被其他操作修改，请刷新后重试")
+	case errors.Is(err, content.ErrInvalidDocument), errors.Is(err, content.ErrUnsafeDocumentPath):
+		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT", "文档路径或内容无效")
+	default:
+		writeError(w, http.StatusInternalServerError, "DOCUMENT_WRITE_FAILED", "文档操作失败")
+	}
+}
+
 func decodeCredentials(w http.ResponseWriter, r *http.Request, target *credentialsRequest) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	decoder := json.NewDecoder(r.Body)
@@ -250,7 +425,7 @@ func requestIsSecure(r *http.Request) bool {
 func (s *server) site(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"name":        "Markdown 文档库",
-		"stage":       "M1",
+		"stage":       "M2",
 		"environment": envOrDefault("APP_ENV", "local"),
 	})
 }

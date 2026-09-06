@@ -15,6 +15,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ type Document struct {
 	Draft       bool      `json:"-"`
 	order       int
 	searchText  string
+	sourcePath  string
 }
 
 type Node struct {
@@ -69,10 +71,11 @@ type SearchResult struct {
 }
 
 type Store struct {
-	root   string
-	mu     sync.RWMutex
-	docs   map[string]Document
-	issues []Issue
+	root    string
+	mu      sync.RWMutex
+	writeMu sync.Mutex
+	docs    map[string]Document
+	issues  []Issue
 }
 
 func NewStore(root string) *Store {
@@ -209,6 +212,210 @@ func (s *Store) Search(query string) ([]SearchResult, error) {
 	return results, nil
 }
 
+// AdminDocuments returns every valid source document, including drafts, for
+// the authenticated management surface. The public index intentionally keeps
+// drafts out of Tree, Document, and Search.
+func (s *Store) AdminDocuments() ([]Document, error) {
+	docs, _, err := scanWithDrafts(s.root, true)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Document, 0, len(docs))
+	for _, doc := range docs {
+		doc.Path = doc.sourcePath
+		result = append(result, doc)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
+	return result, nil
+}
+
+// ReadSource reads the Markdown source and returns its content hash. The hash
+// is the optimistic-lock version used by the admin API's If-Match header.
+func (s *Store) ReadSource(relativePath string) (string, string, error) {
+	path, err := cleanDocumentPath(relativePath)
+	if err != nil {
+		return "", "", err
+	}
+	fullPath, err := resolveDocumentPath(s.root, path)
+	if err != nil {
+		return "", "", err
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", "", ErrDocumentNotFound
+		}
+		return "", "", err
+	}
+	return string(data), hashBytes(data), nil
+}
+
+var (
+	ErrDocumentExists     = errors.New("document already exists")
+	ErrDocumentNotFound   = errors.New("document not found")
+	ErrVersionConflict    = errors.New("document version conflict")
+	ErrInvalidDocument    = errors.New("document content is invalid")
+	ErrUnsafeDocumentPath = errors.New("document path is unsafe")
+)
+
+// CreateSource validates and atomically creates a Markdown document.
+func (s *Store) CreateSource(relativePath string, data []byte) (Document, error) {
+	return s.writeSource(relativePath, data, "", true)
+}
+
+// UpdateSource validates and atomically updates a Markdown document when its
+// current hash matches expectedHash.
+func (s *Store) UpdateSource(relativePath string, data []byte, expectedHash string) (Document, error) {
+	if strings.TrimSpace(expectedHash) == "" {
+		return Document{}, ErrVersionConflict
+	}
+	return s.writeSource(relativePath, data, expectedHash, false)
+}
+
+// DeleteSource removes a Markdown document when its current hash matches
+// expectedHash.
+func (s *Store) DeleteSource(relativePath, expectedHash string) error {
+	path, err := cleanDocumentPath(relativePath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(expectedHash) == "" {
+		return ErrVersionConflict
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	fullPath, err := resolveDocumentPath(s.root, path)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrDocumentNotFound
+		}
+		return err
+	}
+	if expectedHash != hashBytes(data) {
+		return ErrVersionConflict
+	}
+	if err := os.Remove(fullPath); err != nil {
+		return err
+	}
+	return s.Refresh()
+}
+
+func (s *Store) writeSource(relativePath string, data []byte, expectedHash string, createOnly bool) (Document, error) {
+	path, err := cleanDocumentPath(relativePath)
+	if err != nil {
+		return Document{}, err
+	}
+	doc, err := parseDocument(path, data)
+	if err != nil {
+		return Document{}, fmt.Errorf("%w: %v", ErrInvalidDocument, err)
+	}
+	doc.Path = path
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	fullPath, err := resolveDocumentPath(s.root, path)
+	if err != nil {
+		return Document{}, err
+	}
+	current, readErr := os.ReadFile(fullPath)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return Document{}, readErr
+	}
+	exists := readErr == nil
+	if createOnly && exists {
+		return Document{}, ErrDocumentExists
+	}
+	if !createOnly && !exists {
+		return Document{}, ErrDocumentNotFound
+	}
+	if !createOnly && expectedHash != hashBytes(current) {
+		return Document{}, ErrVersionConflict
+	}
+	if err := atomicWrite(fullPath, data); err != nil {
+		return Document{}, err
+	}
+	if err := s.Refresh(); err != nil {
+		return Document{}, err
+	}
+	return doc, nil
+}
+
+func atomicWrite(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(directory, ".noteblog-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o640); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func hashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func resolveDocumentPath(root, relativePath string) (string, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	fullPath := filepath.Join(absoluteRoot, filepath.FromSlash(relativePath))
+	relative, err := filepath.Rel(absoluteRoot, fullPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", ErrUnsafeDocumentPath
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+	current := absoluteRoot
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if errors.Is(statErr, os.ErrNotExist) {
+			break
+		}
+		if statErr != nil {
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", ErrUnsafeDocumentPath
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return "", ErrUnsafeDocumentPath
+		}
+	}
+	return fullPath, nil
+}
+
 type treeNode struct {
 	node     Node
 	children []*treeNode
@@ -284,6 +491,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func scan(root string) (map[string]Document, []Issue, error) {
+	return scanWithDrafts(root, false)
+}
+
+func scanWithDrafts(root string, includeDrafts bool) (map[string]Document, []Issue, error) {
 	docs := make(map[string]Document)
 	var issues []Issue
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -318,7 +529,7 @@ func scan(root string) (map[string]Document, []Issue, error) {
 			issues = append(issues, Issue{Path: relative, Message: err.Error()})
 			return nil
 		}
-		if !doc.Draft {
+		if includeDrafts || !doc.Draft {
 			docs[doc.Path] = doc
 		}
 		return nil
@@ -331,7 +542,8 @@ func parseDocument(relativePath string, data []byte) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	path := filepath.ToSlash(relativePath)
+	sourcePath := filepath.ToSlash(relativePath)
+	path := sourcePath
 	if metadata.Slug != "" {
 		if clean, cleanErr := cleanDocumentPath(metadata.Slug); cleanErr == nil {
 			path = clean
@@ -359,6 +571,7 @@ func parseDocument(relativePath string, data []byte) (Document, error) {
 		Draft:       metadata.Draft,
 		order:       metadata.Order,
 		searchText:  plainText(body),
+		sourcePath:  sourcePath,
 	}, nil
 }
 

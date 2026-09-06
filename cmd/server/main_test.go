@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -94,6 +95,78 @@ func TestAuthAPI(t *testing.T) {
 	handler.ServeHTTP(meAfterLogout, meRequest)
 	if meAfterLogout.Code != 401 {
 		t.Fatalf("me after logout = %d", meAfterLogout.Code)
+	}
+}
+
+func TestAdminDocumentAPIRequiresSessionAndUsesVersions(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := ensureDataDirectories(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	store, err := auth.Open(filepath.Join(dataDir, "noteblog.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	app := &server{
+		config: config{DataDir: dataDir},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:  content.NewStore(filepath.Join(dataDir, "content")),
+		auth:   store,
+	}
+	handler := app.routes()
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest("GET", "/api/v1/admin/docs", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized list = %d", unauthorized.Code)
+	}
+	if _, err := store.Setup("admin", "short"); err != nil {
+		t.Fatal(err)
+	}
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"short"}`)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d %s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	request := httptest.NewRequest("POST", "/api/v1/admin/docs", strings.NewReader(`{"path":"managed.md","content":"# 第一版\n"}`))
+	request.AddCookie(cookie)
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, request)
+	if created.Code != http.StatusCreated || created.Header().Get("ETag") == "" {
+		t.Fatalf("create = %d %s", created.Code, created.Body.String())
+	}
+	createdETag := created.Header().Get("ETag")
+	listRequest := httptest.NewRequest("GET", "/api/v1/admin/docs", nil)
+	listRequest.AddCookie(cookie)
+	listed := httptest.NewRecorder()
+	handler.ServeHTTP(listed, listRequest)
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), "managed.md") {
+		t.Fatalf("list = %d %s", listed.Code, listed.Body.String())
+	}
+	staleRequest := httptest.NewRequest("PUT", "/api/v1/admin/docs/managed.md", strings.NewReader(`{"content":"# 错误版本\n"}`))
+	staleRequest.Header.Set("If-Match", `"stale"`)
+	staleRequest.AddCookie(cookie)
+	stale := httptest.NewRecorder()
+	handler.ServeHTTP(stale, staleRequest)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("stale update = %d %s", stale.Code, stale.Body.String())
+	}
+	updateRequest := httptest.NewRequest("PUT", "/api/v1/admin/docs/managed.md", strings.NewReader(`{"content":"# 第二版\n"}`))
+	updateRequest.Header.Set("If-Match", createdETag)
+	updateRequest.AddCookie(cookie)
+	updated := httptest.NewRecorder()
+	handler.ServeHTTP(updated, updateRequest)
+	if updated.Code != http.StatusOK || updated.Header().Get("ETag") == createdETag {
+		t.Fatalf("update = %d %s", updated.Code, updated.Body.String())
+	}
+	deleteRequest := httptest.NewRequest("DELETE", "/api/v1/admin/docs/managed.md", nil)
+	deleteRequest.Header.Set("If-Match", updated.Header().Get("ETag"))
+	deleteRequest.AddCookie(cookie)
+	deleted := httptest.NewRecorder()
+	handler.ServeHTTP(deleted, deleteRequest)
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", deleted.Code, deleted.Body.String())
 	}
 }
 

@@ -6,7 +6,7 @@
 
 ## Docker / GitHub / 飞牛测试
 
-已提供多阶段 `Dockerfile`、GHCR 双架构构建工作流和飞牛 Compose。Go 在容器中直接提供嵌入的前端页面，数据保存到 `/data`。当前镜像包含 M1 阅读端和 M2 管理员初始化/登录页面，文档编辑和上传仍在开发。
+已提供多阶段 `Dockerfile`、GHCR 双架构构建工作流和飞牛 Compose。Go 在容器中直接提供嵌入的前端页面，数据保存到 `/data`。当前镜像包含 M1 阅读端和 M2 管理员初始化、登录、文档新建、编辑、删除，媒体上传仍在开发。
 
 完整步骤见 [Docker、GitHub Actions 与飞牛测试指南](docs/DOCKER_GITHUB_FNOS.md)、[M1 阅读端进度](docs/progress/PHASE_01_READER.md) 和 [M2 身份进度](docs/progress/PHASE_02_ADMIN.md)。将项目推送到 GitHub 的 `main` 或 `master` 后，工作流通过检查即发布 `ghcr.io/用户名/仓库名:edge`；飞牛使用 `deploy/compose.yaml` 拉取测试。
 

@@ -40,6 +40,14 @@ type AdminUser = {
   created_at: string;
 };
 
+type AdminDocumentSummary = {
+  path: string;
+  title: string;
+  description?: string;
+  hash: string;
+  draft: boolean;
+};
+
 const site = ref<Site | null>(null);
 const tree = ref<TreeNode[]>([]);
 const currentDocument = ref<Document | null>(null);
@@ -59,6 +67,13 @@ const adminPasswordConfirmation = ref("");
 const adminBusy = ref(false);
 const adminError = ref("");
 const adminMessage = ref("");
+const adminDocuments = ref<AdminDocumentSummary[]>([]);
+const adminSelectedPath = ref("");
+const adminEditingPath = ref("");
+const adminDocumentContent = ref("");
+const adminDocumentHash = ref("");
+const adminDocumentBusy = ref(false);
+const adminDocumentError = ref("");
 
 const flattenedTree = computed(() => {
   const result: Array<TreeNode & { depth: number }> = [];
@@ -201,6 +216,7 @@ async function loadAdmin() {
       const payload = (await response.json()) as { user: AdminUser };
       adminUser.value = payload.user;
       adminMode.value = "authenticated";
+      await loadAdminDocuments();
       return;
     }
     adminMode.value = "setup";
@@ -247,11 +263,112 @@ async function submitAdminAuth(mode: "setup" | "login") {
       adminUser.value = payload.user;
       adminMode.value = "authenticated";
       adminPassword.value = "";
+      await loadAdminDocuments();
     }
   } catch {
     adminError.value = "无法连接认证服务，请确认容器已经更新到最新镜像。";
   } finally {
     adminBusy.value = false;
+  }
+}
+
+async function loadAdminDocuments(preferredPath = "") {
+  adminDocumentError.value = "";
+  const response = await fetch("/api/v1/admin/docs");
+  if (response.status === 401) {
+    adminMode.value = "login";
+    adminUser.value = null;
+    return;
+  }
+  if (!response.ok) throw new Error("无法读取文档列表");
+  adminDocuments.value = (await response.json()) as AdminDocumentSummary[];
+  const nextPath = preferredPath || adminSelectedPath.value || adminDocuments.value[0]?.path || "";
+  if (nextPath) await selectAdminDocument(nextPath);
+  else startNewAdminDocument();
+}
+
+async function selectAdminDocument(path: string) {
+  adminDocumentError.value = "";
+  adminDocumentBusy.value = true;
+  try {
+    const response = await fetch(`/api/v1/admin/docs/${path.split("/").map(encodeURIComponent).join("/")}`);
+    if (!response.ok) throw new Error("无法读取文档内容");
+    const payload = (await response.json()) as { path: string; content: string; hash: string };
+    adminSelectedPath.value = payload.path;
+    adminEditingPath.value = payload.path;
+    adminDocumentContent.value = payload.content;
+    adminDocumentHash.value = payload.hash;
+  } catch (error) {
+    adminDocumentError.value = error instanceof Error ? error.message : "无法读取文档内容";
+  } finally {
+    adminDocumentBusy.value = false;
+  }
+}
+
+function startNewAdminDocument() {
+  adminSelectedPath.value = "";
+  adminEditingPath.value = "new-document.md";
+  adminDocumentContent.value = "---\ntitle: 新文档\n---\n\n开始写作。\n";
+  adminDocumentHash.value = "";
+  adminDocumentError.value = "";
+}
+
+async function saveAdminDocument() {
+  const path = adminEditingPath.value.trim();
+  if (!path) {
+    adminDocumentError.value = "请输入 Markdown 文件路径。";
+    return;
+  }
+  adminDocumentBusy.value = true;
+  adminDocumentError.value = "";
+  try {
+    const isNew = !adminSelectedPath.value;
+    const url = isNew ? "/api/v1/admin/docs" : `/api/v1/admin/docs/${adminSelectedPath.value.split("/").map(encodeURIComponent).join("/")}`;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (!isNew) headers["If-Match"] = `"${adminDocumentHash.value}"`;
+    const response = await fetch(url, {
+      method: isNew ? "POST" : "PUT",
+      headers,
+      body: JSON.stringify({ path: isNew ? path : undefined, content: adminDocumentContent.value }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as { path?: string; hash?: string; error?: { message?: string } };
+    if (!response.ok) {
+      adminDocumentError.value = payload.error?.message ?? "保存失败，请刷新后重试。";
+      return;
+    }
+    adminMessage.value = "文档已保存。";
+    adminSelectedPath.value = payload.path ?? path;
+    adminEditingPath.value = payload.path ?? path;
+    adminDocumentHash.value = payload.hash ?? response.headers.get("ETag")?.replace(/^W\//, "").replaceAll('"', "") ?? "";
+    await loadAdminDocuments(adminSelectedPath.value);
+  } catch {
+    adminDocumentError.value = "无法连接文档服务。";
+  } finally {
+    adminDocumentBusy.value = false;
+  }
+}
+
+async function deleteAdminDocument() {
+  if (!adminSelectedPath.value || !window.confirm(`确定删除「${adminSelectedPath.value}」吗？`)) return;
+  adminDocumentBusy.value = true;
+  adminDocumentError.value = "";
+  try {
+    const response = await fetch(`/api/v1/admin/docs/${adminSelectedPath.value.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "DELETE",
+      headers: { "If-Match": `"${adminDocumentHash.value}"` },
+    });
+    const payload = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+    if (!response.ok) {
+      adminDocumentError.value = payload.error?.message ?? "删除失败，请刷新后重试。";
+      return;
+    }
+    adminMessage.value = "文档已删除。";
+    adminSelectedPath.value = "";
+    await loadAdminDocuments();
+  } catch {
+    adminDocumentError.value = "无法连接文档服务。";
+  } finally {
+    adminDocumentBusy.value = false;
   }
 }
 
@@ -302,10 +419,42 @@ onBeforeUnmount(() => {
         <p class="loading-state">正在检查登录状态…</p>
       </section>
       <section v-else-if="adminMode === 'authenticated'" class="admin-card">
-        <p class="admin-eyebrow">管理员</p>
-        <h1>欢迎回来，{{ adminUser?.username }}</h1>
-        <p class="article__lead">身份验证已完成。文档编辑功能将在此页面继续接入。</p>
-        <button class="admin-button" type="button" :disabled="adminBusy" @click="adminLogout">退出登录</button>
+        <div class="admin-card__header">
+          <div>
+            <p class="admin-eyebrow">管理员 · {{ adminUser?.username }}</p>
+            <h1>管理文档</h1>
+          </div>
+          <button class="admin-link-button" type="button" :disabled="adminBusy" @click="adminLogout">退出登录</button>
+        </div>
+        <p v-if="adminMessage" class="admin-feedback" role="status">{{ adminMessage }}</p>
+        <div class="admin-editor">
+          <aside class="admin-document-list" aria-label="文档列表">
+            <button class="admin-new-button" type="button" :disabled="adminDocumentBusy" @click="startNewAdminDocument">＋ 新建文档</button>
+            <button
+              v-for="document in adminDocuments"
+              :key="document.path"
+              type="button"
+              class="admin-document-item"
+              :class="{ 'admin-document-item--active': adminSelectedPath === document.path }"
+              @click="selectAdminDocument(document.path)"
+            >
+              <strong>{{ document.title }}</strong>
+              <span>{{ document.path }}<template v-if="document.draft"> · 草稿</template></span>
+            </button>
+            <p v-if="!adminDocuments.length" class="sidebar__empty">暂无文档</p>
+          </aside>
+          <form class="admin-editor-form" @submit.prevent="saveAdminDocument">
+            <label for="admin-document-path">文件路径</label>
+            <input id="admin-document-path" v-model="adminEditingPath" required placeholder="例如：guides/intro.md" :disabled="Boolean(adminSelectedPath)">
+            <label for="admin-document-content">Markdown 内容</label>
+            <textarea id="admin-document-content" v-model="adminDocumentContent" rows="20" spellcheck="false" :disabled="adminDocumentBusy"></textarea>
+            <p v-if="adminDocumentError" class="admin-feedback admin-feedback--error" role="alert">{{ adminDocumentError }}</p>
+            <div class="admin-editor-actions">
+              <button class="admin-button" type="submit" :disabled="adminDocumentBusy">{{ adminDocumentBusy ? '处理中…' : '保存文档' }}</button>
+              <button v-if="adminSelectedPath" class="admin-danger-button" type="button" :disabled="adminDocumentBusy" @click="deleteAdminDocument">删除</button>
+            </div>
+          </form>
+        </div>
       </section>
       <section v-else class="admin-card">
         <p class="admin-eyebrow">Markdown 文档库 · 管理员</p>

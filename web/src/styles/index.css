@@ -102,6 +102,111 @@ button:focus-visible,
   padding: var(--space-8);
 }
 
+.admin-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.admin-editor {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+  gap: var(--space-6);
+  margin-top: var(--space-6);
+}
+
+.admin-document-list {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  min-width: 0;
+  max-height: 32rem;
+  overflow-y: auto;
+}
+
+.admin-new-button,
+.admin-document-item {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.admin-new-button {
+  border-color: var(--color-border);
+  color: var(--color-primary-hover);
+  font-weight: 700;
+}
+
+.admin-document-item {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.admin-document-item span {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-document-item:hover,
+.admin-document-item:focus-visible,
+.admin-document-item--active {
+  background: var(--color-surface-selected);
+  color: var(--color-primary-hover);
+}
+
+.admin-editor-form {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.admin-editor-form label { color: var(--color-text-secondary); font-size: 0.875rem; font-weight: 600; }
+
+.admin-editor-form input,
+.admin-editor-form textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  padding: 0.625rem 0.75rem;
+  font: inherit;
+}
+
+.admin-editor-form textarea {
+  min-height: 20rem;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.admin-editor-form input:focus-visible,
+.admin-editor-form textarea:focus-visible { outline: none; box-shadow: var(--focus-outline); }
+
+.admin-editor-actions { display: flex; align-items: center; gap: var(--space-3); }
+
+.admin-danger-button {
+  margin-top: var(--space-3);
+  border: 1px solid var(--color-danger, #b42318);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-danger, #b42318);
+  cursor: pointer;
+  padding: 0.625rem 1rem;
+  font: inherit;
+  font-weight: 700;
+}
+
 .admin-eyebrow {
   margin: 0 0 var(--space-2);
   color: var(--color-primary-hover);
@@ -459,6 +564,9 @@ h2 { margin: var(--space-12) 0 var(--space-4); border-bottom: 1px solid var(--co
 @media (max-width: 47.9375rem) {
   .app-header__inner { padding-inline: var(--space-4); }
   .article { padding: var(--space-8) var(--space-6); }
+  .admin-card { padding: var(--space-5); }
+  .admin-editor { grid-template-columns: 1fr; }
+  .admin-document-list { max-height: 12rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

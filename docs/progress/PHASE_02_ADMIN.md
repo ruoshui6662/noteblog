@@ -32,9 +32,9 @@
 | 检查 | 结果 | 说明 |
 |---|---|---|
 | `go test ./...` | 通过 | 覆盖迁移、一次性初始化、哈希存储、错误密码、登录、会话、退出和 HTTP 接口。 |
-| `go test -tags production ./...` | 待推送后确认 | 生产嵌入模式需要和 Docker 构建一起验证。 |
-| `go vet -tags production ./...` | 待推送后确认 | 与生产镜像同一检查入口。 |
-| GitHub Actions / GHCR | 待推送后确认 | CI 会构建 AMD64，运行容器烟测，并发布 `ghcr.io/ruoshui6662/noteblog:edge`。 |
+| `go test -tags production ./...` | 通过 | 生产嵌入模式通过。 |
+| `go vet -tags production ./...` | 通过 | 生产构建静态检查通过。 |
+| GitHub Actions / GHCR | 通过 | run [34065988934](https://github.com/ruoshui6662/noteblog/actions/runs/34065988934) 的 AMD64 构建、Compose、容器烟测和 AMD64/ARM64 发布均成功。 |
 
 ## 当前边界
 

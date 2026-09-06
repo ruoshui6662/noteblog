@@ -76,6 +76,95 @@ button:focus-visible,
   font-weight: 600;
 }
 
+.admin-back-link {
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.admin-back-link:hover,
+.admin-back-link:focus-visible { color: var(--color-primary-hover); }
+
+.admin-main {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: calc(var(--header-height) + var(--space-8)) var(--space-4) var(--space-8);
+}
+
+.admin-card {
+  width: min(100%, 30rem);
+  max-width: 30rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-background);
+  box-shadow: var(--shadow-md, 0 1rem 3rem rgb(15 23 42 / 0.08));
+  padding: var(--space-8);
+}
+
+.admin-eyebrow {
+  margin: 0 0 var(--space-2);
+  color: var(--color-primary-hover);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-form {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.admin-form label { color: var(--color-text-secondary); font-size: 0.875rem; font-weight: 600; }
+
+.admin-form input {
+  width: 100%;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  padding: 0.625rem 0.75rem;
+  font: inherit;
+}
+
+.admin-form input:focus-visible { outline: none; box-shadow: var(--focus-outline); }
+
+.admin-button {
+  margin-top: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--white);
+  cursor: pointer;
+  padding: 0.625rem 1rem;
+  font: inherit;
+  font-weight: 700;
+}
+
+.admin-button:disabled { cursor: wait; opacity: 0.65; }
+
+.admin-link-button {
+  margin-top: var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--color-primary-hover);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.admin-feedback {
+  margin: var(--space-2) 0 0;
+  color: var(--color-primary-hover);
+  font-size: 0.875rem;
+}
+
+.admin-feedback--error { color: var(--color-danger, #b42318); }
+
 .docs-layout {
   display: flex;
   min-height: 100vh;

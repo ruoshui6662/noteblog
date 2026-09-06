@@ -93,10 +93,16 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.authLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.authLogout)
 	mux.HandleFunc("GET /api/v1/auth/me", s.authMe)
+	mux.HandleFunc("GET /api/v1/auth/setup", redirectAdmin)
+	mux.HandleFunc("GET /api/v1/auth/login", redirectAdmin)
 	mux.HandleFunc("GET /media/", s.media)
 	mux.HandleFunc("GET /api/", http.NotFound)
 	mux.Handle("GET /", webassets.Handler())
 	return mux
+}
+
+func redirectAdmin(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/admin", http.StatusTemporaryRedirect)
 }
 
 func (s *server) health(w http.ResponseWriter, r *http.Request) {

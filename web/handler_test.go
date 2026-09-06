@@ -16,7 +16,7 @@ func TestStaticAndSPARoutes(t *testing.T) {
 		status int
 	}{
 		{"/", 200}, {"/assets/app.js", 200}, {"/docs/中文", 200},
-		{"/admin/editor", 200}, {"/assets/missing.js", 404}, {"/unknown", 404},
+		{"/admin", 200}, {"/admin/editor", 200}, {"/assets/missing.js", 404}, {"/unknown", 404},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			response := httptest.NewRecorder()

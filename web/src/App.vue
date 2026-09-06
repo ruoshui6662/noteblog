@@ -35,6 +35,11 @@ type SearchResult = {
   snippet: string;
 };
 
+type AdminUser = {
+  username: string;
+  created_at: string;
+};
+
 const site = ref<Site | null>(null);
 const tree = ref<TreeNode[]>([]);
 const currentDocument = ref<Document | null>(null);
@@ -45,6 +50,15 @@ const searchResults = ref<SearchResult[]>([]);
 const searchStatus = ref<"idle" | "loading" | "ready" | "error">("idle");
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let searchRequest = 0;
+const isAdminRoute = computed(() => window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/"));
+const adminMode = ref<"checking" | "setup" | "login" | "authenticated">("checking");
+const adminUser = ref<AdminUser | null>(null);
+const adminUsername = ref("");
+const adminPassword = ref("");
+const adminPasswordConfirmation = ref("");
+const adminBusy = ref(false);
+const adminError = ref("");
+const adminMessage = ref("");
 
 const flattenedTree = computed(() => {
   const result: Array<TreeNode & { depth: number }> = [];
@@ -178,6 +192,80 @@ async function loadApp() {
   }
 }
 
+async function loadAdmin() {
+  adminMode.value = "checking";
+  adminError.value = "";
+  try {
+    const response = await fetch("/api/v1/auth/me");
+    if (response.ok) {
+      const payload = (await response.json()) as { user: AdminUser };
+      adminUser.value = payload.user;
+      adminMode.value = "authenticated";
+      return;
+    }
+    adminMode.value = "setup";
+  } catch {
+    adminMode.value = "login";
+    adminError.value = "无法连接认证服务，请确认容器已经更新到最新镜像。";
+  }
+}
+
+async function submitAdminAuth(mode: "setup" | "login") {
+  adminError.value = "";
+  adminMessage.value = "";
+  if (!adminUsername.value.trim() || !adminPassword.value) {
+    adminError.value = "请输入用户名和密码。";
+    return;
+  }
+  if (mode === "setup" && adminPassword.value !== adminPasswordConfirmation.value) {
+    adminError.value = "两次输入的密码不一致。";
+    return;
+  }
+  adminBusy.value = true;
+  try {
+    const response = await fetch(`/api/v1/auth/${mode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: adminUsername.value.trim(), password: adminPassword.value }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as { user?: AdminUser; error?: { message?: string } };
+    if (!response.ok) {
+      if (mode === "setup" && response.status === 409) {
+        adminMode.value = "login";
+        adminMessage.value = "管理员已经初始化，请直接登录。";
+      } else {
+        adminError.value = payload.error?.message ?? "操作失败，请稍后重试。";
+      }
+      return;
+    }
+    if (mode === "setup") {
+      adminMode.value = "login";
+      adminPassword.value = "";
+      adminPasswordConfirmation.value = "";
+      adminMessage.value = "初始化成功，请使用刚设置的密码登录。";
+    } else if (payload.user) {
+      adminUser.value = payload.user;
+      adminMode.value = "authenticated";
+      adminPassword.value = "";
+    }
+  } catch {
+    adminError.value = "无法连接认证服务，请确认容器已经更新到最新镜像。";
+  } finally {
+    adminBusy.value = false;
+  }
+}
+
+async function adminLogout() {
+  adminBusy.value = true;
+  try {
+    await fetch("/api/v1/auth/logout", { method: "POST" });
+  } finally {
+    adminUser.value = null;
+    adminMode.value = "login";
+    adminBusy.value = false;
+  }
+}
+
 function handlePopState() {
 	if (routeDocumentPath()) {
 		void loadDocument(routeDocumentPath());
@@ -188,7 +276,8 @@ function handlePopState() {
 
 onMounted(() => {
   window.addEventListener("popstate", handlePopState);
-  void loadApp();
+  if (isAdminRoute.value) void loadAdmin();
+  else void loadApp();
 });
 
 onBeforeUnmount(() => {
@@ -198,7 +287,54 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="isAdminRoute" class="admin-shell">
+    <header class="app-header">
+      <div class="app-header__inner">
+        <a class="brand" href="/" aria-label="返回文档首页">
+          <span class="brand__mark" aria-hidden="true">M</span>
+          <span>{{ site?.name ?? "Markdown 文档库" }}</span>
+        </a>
+        <a class="admin-back-link" href="/">返回文档</a>
+      </div>
+    </header>
+    <main class="admin-main">
+      <section v-if="adminMode === 'checking'" class="admin-card" aria-live="polite">
+        <p class="loading-state">正在检查登录状态…</p>
+      </section>
+      <section v-else-if="adminMode === 'authenticated'" class="admin-card">
+        <p class="admin-eyebrow">管理员</p>
+        <h1>欢迎回来，{{ adminUser?.username }}</h1>
+        <p class="article__lead">身份验证已完成。文档编辑功能将在此页面继续接入。</p>
+        <button class="admin-button" type="button" :disabled="adminBusy" @click="adminLogout">退出登录</button>
+      </section>
+      <section v-else class="admin-card">
+        <p class="admin-eyebrow">Markdown 文档库 · 管理员</p>
+        <h1>{{ adminMode === 'setup' ? '初始化管理员' : '管理员登录' }}</h1>
+        <p class="article__lead">
+          {{ adminMode === 'setup' ? '首次部署时创建唯一管理员账号。' : '登录后管理文档内容。' }}
+        </p>
+        <form class="admin-form" @submit.prevent="submitAdminAuth(adminMode === 'setup' ? 'setup' : 'login')">
+          <label for="admin-username">用户名</label>
+          <input id="admin-username" v-model="adminUsername" autocomplete="username" required minlength="3" maxlength="64">
+          <label for="admin-password">密码</label>
+          <input id="admin-password" v-model="adminPassword" type="password" autocomplete="new-password" required minlength="12">
+          <template v-if="adminMode === 'setup'">
+            <label for="admin-password-confirmation">确认密码</label>
+            <input id="admin-password-confirmation" v-model="adminPasswordConfirmation" type="password" autocomplete="new-password" required minlength="12">
+          </template>
+          <p v-if="adminError" class="admin-feedback admin-feedback--error" role="alert">{{ adminError }}</p>
+          <p v-if="adminMessage" class="admin-feedback" role="status">{{ adminMessage }}</p>
+          <button class="admin-button" type="submit" :disabled="adminBusy">
+            {{ adminBusy ? '处理中…' : adminMode === 'setup' ? '创建管理员' : '登录' }}
+          </button>
+        </form>
+        <button class="admin-link-button" type="button" @click="adminMode = adminMode === 'setup' ? 'login' : 'setup'; adminError = ''; adminMessage = ''">
+          {{ adminMode === 'setup' ? '已有管理员？去登录' : '首次部署？初始化管理员' }}
+        </button>
+      </section>
+    </main>
+  </div>
+  <div v-else class="app-shell">
     <header class="app-header">
       <div class="app-header__inner">
         <a class="brand" href="/" aria-label="返回文档首页" @click.prevent="goHome">

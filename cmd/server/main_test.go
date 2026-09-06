@@ -33,6 +33,11 @@ func TestRoutesAndReadiness(t *testing.T) {
 			t.Fatalf("%s: got %d, want %d", test.path, response.Code, test.status)
 		}
 	}
+	redirectResponse := httptest.NewRecorder()
+	handler.ServeHTTP(redirectResponse, httptest.NewRequest("GET", "/api/v1/auth/setup", nil))
+	if redirectResponse.Code != 307 || redirectResponse.Header().Get("Location") != "/admin" {
+		t.Fatalf("setup page redirect = %d %q", redirectResponse.Code, redirectResponse.Header().Get("Location"))
+	}
 	if err := os.Remove(filepath.Join(dataDir, "media")); err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ func fileHandler(root fs.FS) http.Handler {
 			return
 		}
 		// Only document routes get the SPA shell; missing assets remain 404.
-		if strings.HasPrefix(r.URL.Path, "/docs/") || strings.HasPrefix(r.URL.Path, "/admin/") {
+		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/docs/") || strings.HasPrefix(r.URL.Path, "/admin/") {
 			index, err := fs.ReadFile(root, "index.html")
 			if err != nil {
 				http.Error(w, "Frontend unavailable", http.StatusServiceUnavailable)

@@ -32,7 +32,7 @@
 | `go test -tags production ./...` | 通过 | 生产嵌入模式通过。 |
 | `go vet -tags production ./...` | 通过 | 后端静态检查通过。 |
 | `npm run build` | 通过 | Vue 类型检查与 Vite 生产构建通过。 |
-| Docker/GHCR | 待本次推送后 | GitHub Actions 负责 AMD64 容器测试和双架构发布。 |
+| Docker/GHCR | 通过 | GitHub Actions run [34063857540](https://github.com/ruoshui6662/noteblog/actions/runs/34063857540) 的 AMD64 构建、Compose、HTTP、非 root、持久化测试和 AMD64/ARM64 发布均成功。 |
 
 ## 当前边界
 

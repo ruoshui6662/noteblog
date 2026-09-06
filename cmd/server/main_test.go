@@ -51,6 +51,12 @@ func TestContentAPI(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(contentDir, "welcome.md"), []byte("---\ntitle: 欢迎\ndescription: 第一篇文档\n---\n# 欢迎\n\n正文。\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dataDir, "media", "logo.png"), []byte("png-data"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "media", "notes.html"), []byte("<script>bad</script>"), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	app := &server{
 		config: config{DataDir: dataDir},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -81,6 +87,24 @@ func TestContentAPI(t *testing.T) {
 	handler.ServeHTTP(missingResponse, httptest.NewRequest("GET", "/api/v1/docs/missing.md", nil))
 	if missingResponse.Code != 404 {
 		t.Fatalf("missing document status = %d, want 404", missingResponse.Code)
+	}
+
+	mediaResponse := httptest.NewRecorder()
+	handler.ServeHTTP(mediaResponse, httptest.NewRequest("GET", "/media/logo.png", nil))
+	if mediaResponse.Code != 200 || mediaResponse.Body.String() != "png-data" || mediaResponse.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("media response = %d %q %q", mediaResponse.Code, mediaResponse.Body.String(), mediaResponse.Header().Get("Content-Type"))
+	}
+
+	attachmentResponse := httptest.NewRecorder()
+	handler.ServeHTTP(attachmentResponse, httptest.NewRequest("GET", "/media/notes.html", nil))
+	if attachmentResponse.Code != 200 || attachmentResponse.Header().Get("Content-Type") != "application/octet-stream" || attachmentResponse.Header().Get("Content-Disposition") == "" {
+		t.Fatalf("attachment response = %d %q %q", attachmentResponse.Code, attachmentResponse.Header().Get("Content-Type"), attachmentResponse.Header().Get("Content-Disposition"))
+	}
+
+	traversalResponse := httptest.NewRecorder()
+	app.media(traversalResponse, httptest.NewRequest("GET", "/media/../content/welcome.md", nil))
+	if traversalResponse.Code != 404 {
+		t.Fatalf("media traversal status = %d, want 404", traversalResponse.Code)
 	}
 
 	searchResponse := httptest.NewRecorder()

@@ -60,6 +60,48 @@ tags: [Go, Docker]
 	}
 }
 
+func TestDocumentRewritesRelativeMediaReferences(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "guide.md", "# 图像\n\n![Logo](media/logo.png)\n\n![External](https://example.com/logo.png)\n\n![Bad](javascript:alert(1))\n")
+	doc, ok, err := NewStore(root).Document("guide.md")
+	if err != nil || !ok {
+		t.Fatalf("Document() = %#v, %v", doc, err)
+	}
+	if !strings.Contains(doc.HTML, `src="/media/logo.png"`) {
+		t.Fatalf("relative media reference was not rewritten: %s", doc.HTML)
+	}
+	if !strings.Contains(doc.HTML, `src="https://example.com/logo.png"`) {
+		t.Fatalf("external media reference was changed: %s", doc.HTML)
+	}
+	if strings.Contains(strings.ToLower(doc.HTML), "javascript:") {
+		t.Fatalf("dangerous media reference was kept: %s", doc.HTML)
+	}
+}
+
+func TestResolveMediaPathStaysInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "logo.png", "png")
+	resolved, err := ResolveMediaPath(root, "logo.png")
+	if err != nil || resolved == "" {
+		t.Fatalf("ResolveMediaPath() = %q, %v", resolved, err)
+	}
+	for _, path := range []string{"../logo.png", "/logo.png", "", "secret.txt:stream"} {
+		if _, err := ResolveMediaPath(root, path); err == nil {
+			t.Fatalf("ResolveMediaPath(%q) succeeded, want rejection", path)
+		}
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "outside.txt")
+	if err := os.Symlink(outside, link); err == nil {
+		if _, err := ResolveMediaPath(root, "outside.txt"); err == nil {
+			t.Fatal("symlink outside media root was accepted")
+		}
+	}
+}
+
 func TestStoreRejectsUnsafeDocumentPaths(t *testing.T) {
 	store := NewStore(t.TempDir())
 	for _, path := range []string{"../secret.md", "/secret.md", "secret.txt", ""} {

@@ -314,6 +314,7 @@ func parseDocument(relativePath string, data []byte) (Document, error) {
 		title = titleFromFilename(pathpkg.Base(path))
 	}
 	html, headings := renderMarkdown(body)
+	html = rewriteMediaURLs(html)
 	sum := sha256.Sum256(data)
 	tags := append([]string(nil), metadata.Tags...)
 	return Document{
@@ -359,6 +360,43 @@ func plainText(body []byte) string {
 		}
 	}
 	return strings.Join(output, " ")
+}
+
+var imageSourceAttribute = regexp.MustCompile(`(?i)(src=")([^"]*)(")`)
+
+func rewriteMediaURLs(html string) string {
+	return imageSourceAttribute.ReplaceAllStringFunc(html, func(attribute string) string {
+		parts := imageSourceAttribute.FindStringSubmatch(attribute)
+		if len(parts) != 4 {
+			return attribute
+		}
+		return parts[1] + mediaURL(parts[2]) + parts[3]
+	})
+}
+
+func mediaURL(source string) string {
+	source = strings.TrimSpace(source)
+	lowerSource := strings.ToLower(source)
+	if source == "" || strings.HasPrefix(source, "#") || strings.HasPrefix(source, "/") ||
+		strings.HasPrefix(lowerSource, "http://") || strings.HasPrefix(lowerSource, "https://") ||
+		strings.HasPrefix(lowerSource, "data:image/") {
+		return source
+	}
+	if strings.Contains(source, ":") {
+		return ""
+	}
+	fragment := ""
+	if index := strings.IndexAny(source, "?#"); index >= 0 {
+		fragment = source[index:]
+		source = source[:index]
+	}
+	clean, err := cleanRelativePath(source)
+	if err != nil {
+		return source + fragment
+	}
+	clean = strings.TrimPrefix(clean, "./")
+	clean = strings.TrimPrefix(clean, "media/")
+	return "/media/" + clean + fragment
 }
 
 func snippet(text, query string) string {

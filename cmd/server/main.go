@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -78,6 +80,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tree", s.tree)
 	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("GET /api/v1/docs/", s.document)
+	mux.HandleFunc("GET /media/", s.media)
 	mux.HandleFunc("GET /api/", http.NotFound)
 	mux.Handle("GET /", webassets.Handler())
 	return mux
@@ -159,6 +162,49 @@ func (s *server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logContentIssues()
 	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *server) media(w http.ResponseWriter, r *http.Request) {
+	relativePath := strings.TrimPrefix(r.URL.Path, "/media/")
+	mediaPath, err := content.ResolveMediaPath(filepath.Join(s.config.DataDir, "media"), relativePath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			s.logger.Warn("media request rejected", "path", relativePath, "error", err)
+		}
+		http.NotFound(w, r)
+		return
+	}
+	file, err := os.Open(mediaPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	if isInlineImage(mediaPath) {
+		if contentType := mime.TypeByExtension(filepath.Ext(mediaPath)); contentType != "" {
+			w.Header().Set("Content-Type", contentType)
+		}
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(mediaPath)}))
+	}
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+}
+
+func isInlineImage(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *server) logContentIssues() {

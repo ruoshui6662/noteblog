@@ -43,7 +43,9 @@ curl --fail --silent "http://${address}/api/v1/site" | grep -q 'container'
 test "$(curl -s -o /dev/null -w '%{http_code}' "http://${address}/api/v1/missing")" = 404
 test "$(curl -s -o /dev/null -w '%{http_code}' "http://${address}/assets/missing.js")" = 404
 test "$(docker exec "$name" id -u)" = 10001
-docker exec "$name" sh -c 'test -d /data/content && test -d /data/media && test -d /data/backups; echo retained > /data/content/smoke.txt'
+docker exec "$name" sh -c 'test -d /data/content && test -d /data/media && test -d /data/backups; echo retained > /data/content/smoke.txt; echo attachment > /data/media/smoke.txt'
+test "$(curl --fail --silent "http://${address}/media/smoke.txt")" = attachment
+test "$(curl -s -o /dev/null -w '%{http_code}' "http://${address}/media/../content/smoke.txt")" = 404
 docker rm -f "$name" >/dev/null
 start
 test "$(docker exec "$name" cat /data/content/smoke.txt)" = retained

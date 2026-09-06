@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"markdown-docs/content"
 	webassets "markdown-docs/web"
 )
 
@@ -22,6 +23,7 @@ type config struct {
 type server struct {
 	config config
 	logger *slog.Logger
+	store  *content.Store
 }
 
 func main() {
@@ -48,7 +50,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := &server{config: cfg, logger: logger}
+	store := content.NewStore(filepath.Join(cfg.DataDir, "content"))
+	if err := store.Refresh(); err != nil {
+		logger.Error("failed to scan content directory", "error", err)
+		os.Exit(1)
+	}
+	app := &server{config: cfg, logger: logger, store: store}
 	httpServer := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           app.withRequestLog(app.routes()),
@@ -68,6 +75,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /api/v1/site", s.site)
+	mux.HandleFunc("GET /api/v1/tree", s.tree)
+	mux.HandleFunc("GET /api/v1/docs/", s.document)
 	mux.HandleFunc("GET /api/", http.NotFound)
 	mux.Handle("GET /", webassets.Handler())
 	return mux
@@ -91,9 +100,50 @@ func (s *server) ready(w http.ResponseWriter, r *http.Request) {
 func (s *server) site(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"name":        "Markdown 文档库",
-		"stage":       "M0",
+		"stage":       "M1",
 		"environment": envOrDefault("APP_ENV", "local"),
 	})
+}
+
+func (s *server) tree(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONTENT_UNAVAILABLE", "内容服务未初始化")
+		return
+	}
+	nodes, err := s.store.Tree()
+	if err != nil {
+		s.logger.Error("failed to build content tree", "error", err)
+		writeError(w, http.StatusInternalServerError, "CONTENT_SCAN_FAILED", "无法读取文档目录")
+		return
+	}
+	s.logContentIssues()
+	writeJSON(w, http.StatusOK, nodes)
+}
+
+func (s *server) document(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONTENT_UNAVAILABLE", "内容服务未初始化")
+		return
+	}
+	relativePath := strings.TrimPrefix(r.URL.Path, "/api/v1/docs/")
+	document, found, err := s.store.Document(relativePath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT_PATH", "文档路径无效")
+		return
+	}
+	s.logContentIssues()
+	if !found {
+		writeError(w, http.StatusNotFound, "DOCUMENT_NOT_FOUND", "文档不存在")
+		return
+	}
+	w.Header().Set("ETag", `"`+document.Hash+`"`)
+	writeJSON(w, http.StatusOK, document)
+}
+
+func (s *server) logContentIssues() {
+	for _, issue := range s.store.Issues() {
+		s.logger.Warn("content file excluded", "path", issue.Path, "error", issue.Message)
+	}
 }
 
 func (s *server) withRequestLog(next http.Handler) http.Handler {
@@ -125,4 +175,13 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	})
 }

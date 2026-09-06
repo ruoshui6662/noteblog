@@ -9,10 +9,12 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm AS backend
 WORKDIR /src
 COPY go.mod ./
+COPY go.sum ./
 COPY cmd/ ./cmd/
+COPY content/ ./content/
 COPY web/*.go ./web/
 COPY --from=frontend /src/web/dist ./web/dist
-RUN test -z "$(gofmt -l cmd web/*.go)" && go vet -tags production ./... && go test -tags production ./...
+RUN test -z "$(gofmt -l cmd web/*.go content/*.go)" && go vet -tags production ./... && go test -tags production ./...
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -buildvcs=false -tags production -trimpath -ldflags="-s -w" -o /out/markdown-docs ./cmd/server

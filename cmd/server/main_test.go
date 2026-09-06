@@ -1,10 +1,16 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"markdown-docs/content"
 )
 
 func TestRoutesAndReadiness(t *testing.T) {
@@ -33,5 +39,47 @@ func TestRoutesAndReadiness(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest("GET", "/readyz", nil))
 	if response.Code != 503 {
 		t.Fatalf("missing data directory: got %d, want 503", response.Code)
+	}
+}
+
+func TestContentAPI(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := ensureDataDirectories(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	contentDir := filepath.Join(dataDir, "content")
+	if err := os.WriteFile(filepath.Join(contentDir, "welcome.md"), []byte("---\ntitle: 欢迎\ndescription: 第一篇文档\n---\n# 欢迎\n\n正文。\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	app := &server{
+		config: config{DataDir: dataDir},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:  content.NewStore(contentDir),
+	}
+	handler := app.routes()
+
+	treeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(treeResponse, httptest.NewRequest("GET", "/api/v1/tree", nil))
+	if treeResponse.Code != 200 || !strings.Contains(treeResponse.Body.String(), "welcome.md") {
+		t.Fatalf("tree response = %d %s", treeResponse.Code, treeResponse.Body.String())
+	}
+
+	documentResponse := httptest.NewRecorder()
+	handler.ServeHTTP(documentResponse, httptest.NewRequest("GET", "/api/v1/docs/welcome.md", nil))
+	var documentPayload content.Document
+	if err := json.NewDecoder(documentResponse.Body).Decode(&documentPayload); err != nil {
+		t.Fatal(err)
+	}
+	if documentResponse.Code != 200 || !strings.Contains(documentPayload.HTML, "<h1 id=\"欢迎\">欢迎</h1>") {
+		t.Fatalf("document response = %d %s", documentResponse.Code, documentResponse.Body.String())
+	}
+	if documentResponse.Header().Get("ETag") == "" {
+		t.Fatal("document response must include ETag")
+	}
+
+	missingResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingResponse, httptest.NewRequest("GET", "/api/v1/docs/missing.md", nil))
+	if missingResponse.Code != 404 {
+		t.Fatalf("missing document status = %d, want 404", missingResponse.Code)
 	}
 }

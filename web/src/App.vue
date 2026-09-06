@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 type Site = {
   name: string;
@@ -7,68 +7,218 @@ type Site = {
   environment: string;
 };
 
-const site = ref<Site | null>(null);
-const status = ref<"loading" | "ready" | "error">("loading");
+type TreeNode = {
+  kind: "category" | "document";
+  path: string;
+  title: string;
+  children?: TreeNode[];
+};
 
-onMounted(async () => {
-  try {
-    const response = await fetch("/api/v1/site");
-    if (!response.ok) throw new Error("Site metadata request failed");
-    site.value = (await response.json()) as Site;
-    status.value = "ready";
-  } catch {
-    status.value = "error";
-  }
+type Heading = {
+  level: number;
+  id: string;
+  text: string;
+};
+
+type Document = {
+  path: string;
+  title: string;
+  description?: string;
+  html: string;
+  headings?: Heading[];
+};
+
+const site = ref<Site | null>(null);
+const tree = ref<TreeNode[]>([]);
+const currentDocument = ref<Document | null>(null);
+const status = ref<"loading" | "ready" | "empty" | "error">("loading");
+const errorMessage = ref("");
+
+const flattenedTree = computed(() => {
+  const result: Array<TreeNode & { depth: number }> = [];
+  const visit = (nodes: TreeNode[], depth: number) => {
+    for (const node of nodes) {
+      result.push({ ...node, depth });
+      if (node.children) visit(node.children, depth + 1);
+    }
+  };
+  visit(tree.value, 0);
+  return result;
 });
+
+const selectedPath = computed(() => currentDocument.value?.path ?? "");
+
+function documentURL(path: string) {
+  return `/docs/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function firstDocument(nodes: TreeNode[]): string | null {
+  for (const node of nodes) {
+    if (node.kind === "document") return node.path;
+    if (node.children) {
+      const nested = firstDocument(node.children);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function routeDocumentPath() {
+  if (!window.location.pathname.startsWith("/docs/")) return null;
+  const value = window.location.pathname.slice("/docs/".length);
+  if (!value) return null;
+  try {
+    return value.split("/").map(decodeURIComponent).join("/");
+  } catch {
+    return null;
+  }
+}
+
+async function loadDocument(path: string | null, replace = false) {
+  if (!path) {
+    currentDocument.value = null;
+    status.value = tree.value.length ? "ready" : "empty";
+    return;
+  }
+  status.value = "loading";
+  errorMessage.value = "";
+  try {
+    const response = await fetch(`/api/v1/docs/${path.split("/").map(encodeURIComponent).join("/")}`);
+    if (!response.ok) throw new Error("文档加载失败");
+    currentDocument.value = (await response.json()) as Document;
+    status.value = "ready";
+    const target = documentURL(currentDocument.value.path);
+    if (replace) window.history.replaceState({}, "", target);
+    globalThis.document.title = `${currentDocument.value.title} · ${site.value?.name ?? "Markdown 文档库"}`;
+  } catch (error) {
+    currentDocument.value = null;
+    status.value = "error";
+    errorMessage.value = error instanceof Error ? error.message : "文档加载失败";
+  }
+}
+
+async function selectDocument(path: string) {
+  await loadDocument(path);
+  if (status.value === "ready") {
+    window.history.pushState({}, "", documentURL(path));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+async function loadApp() {
+  status.value = "loading";
+  errorMessage.value = "";
+  try {
+    const [siteResponse, treeResponse] = await Promise.all([
+      fetch("/api/v1/site"),
+      fetch("/api/v1/tree"),
+    ]);
+    if (!siteResponse.ok || !treeResponse.ok) throw new Error("服务请求失败");
+    site.value = (await siteResponse.json()) as Site;
+    tree.value = (await treeResponse.json()) as TreeNode[];
+    const requested = routeDocumentPath();
+    const target = requested ?? firstDocument(tree.value);
+    await loadDocument(target, requested === null && target !== null);
+    if (!target) status.value = "empty";
+  } catch (error) {
+    status.value = "error";
+    errorMessage.value = error instanceof Error ? error.message : "服务请求失败";
+  }
+}
+
+function handlePopState() {
+  void loadDocument(routeDocumentPath());
+}
+
+onMounted(() => {
+  window.addEventListener("popstate", handlePopState);
+  void loadApp();
+});
+
+onBeforeUnmount(() => window.removeEventListener("popstate", handlePopState));
 </script>
 
 <template>
   <div class="app-shell">
     <header class="app-header">
       <div class="app-header__inner">
-        <a class="brand" href="#main-content" aria-label="跳到主要内容">
+        <a class="brand" href="/" aria-label="返回文档首页" @click.prevent="loadApp">
           <span class="brand__mark" aria-hidden="true">M</span>
           <span>{{ site?.name ?? "Markdown 文档库" }}</span>
         </a>
-        <span class="stage-badge">{{ site?.environment ?? "连接中" }} · {{ site?.stage ?? "M0" }}</span>
+        <span class="stage-badge">{{ site?.environment ?? "连接中" }} · {{ site?.stage ?? "M1" }}</span>
       </div>
     </header>
 
     <div class="docs-layout">
       <aside class="sidebar" aria-label="文档导航">
-        <p class="sidebar__label">开发导航</p>
-        <nav>
-          <a class="nav-item nav-item--active" href="#main-content" aria-current="page">工程基线</a>
-          <span class="nav-item nav-item--disabled">内容扫描（下一阶段）</span>
-          <span class="nav-item nav-item--disabled">权限过滤（下一阶段）</span>
+        <p class="sidebar__label">文档导航</p>
+        <nav v-if="flattenedTree.length" class="tree" aria-label="公开文档">
+          <template v-for="node in flattenedTree" :key="`${node.kind}:${node.path}`">
+            <p
+              v-if="node.kind === 'category'"
+              class="tree-item tree-item--category"
+              :style="{ paddingLeft: `${node.depth * 0.75 + 0.75}rem` }"
+            >
+              {{ node.title }}
+            </p>
+            <a
+              v-else
+              class="tree-item tree-item--document"
+              :class="{ 'tree-item--active': selectedPath === node.path }"
+              :style="{ paddingLeft: `${node.depth * 0.75 + 0.75}rem` }"
+              :href="documentURL(node.path)"
+              :aria-current="selectedPath === node.path ? 'page' : undefined"
+              @click.prevent="selectDocument(node.path)"
+            >
+              {{ node.title }}
+            </a>
+          </template>
         </nav>
+        <p v-else class="sidebar__empty">暂无公开文档</p>
       </aside>
 
       <main id="main-content" class="article" tabindex="-1">
-        <p class="breadcrumb">文档库 <span aria-hidden="true">/</span> 工程基线</p>
-        <h1>工程基线已启动</h1>
-        <p class="article__lead">前端、后端与本地数据目录已经建立。下一阶段将接入真实 Markdown 文档树。</p>
-
-        <section class="notice" aria-live="polite">
-          <h2>服务状态</h2>
-          <p v-if="status === 'loading'">正在连接服务…</p>
-          <p v-else-if="status === 'ready'">服务已就绪：{{ site?.environment }} 环境。</p>
-          <p v-else>无法连接服务。请检查服务状态和运行日志，然后刷新页面。</p>
-        </section>
-
-        <section>
-          <h2>本阶段完成内容</h2>
-          <ul>
-            <li>Go 健康检查与数据目录初始化。</li>
-            <li>Vue + Vite 本地开发入口与 API 代理。</li>
-            <li>源自样式基准的三层令牌和阅读布局骨架。</li>
-          </ul>
-        </section>
+        <template v-if="status === 'loading'">
+          <p class="loading-state" role="status">正在加载文档…</p>
+        </template>
+        <template v-else-if="status === 'error'">
+          <section class="notice notice--error" role="alert">
+            <h1>暂时无法加载</h1>
+            <p>{{ errorMessage }}</p>
+            <button type="button" @click="loadApp">重新连接</button>
+          </section>
+        </template>
+        <template v-else-if="status === 'empty'">
+          <p class="breadcrumb">文档库</p>
+          <h1>还没有公开文档</h1>
+          <p class="article__lead">把 Markdown 文件放入飞牛数据卷的 <code>content</code> 目录后刷新页面。</p>
+          <section class="notice" aria-live="polite">
+            <h2>阅读端已就绪</h2>
+            <p>系统会自动读取文件名、Front Matter 和 Markdown 标题生成文档树。</p>
+          </section>
+        </template>
+        <template v-else-if="currentDocument">
+          <p class="breadcrumb">文档库 <span aria-hidden="true">/</span> {{ currentDocument.path }}</p>
+          <h1>{{ currentDocument.title }}</h1>
+          <p v-if="currentDocument.description" class="article__lead">{{ currentDocument.description }}</p>
+          <article class="document-body" v-html="currentDocument.html" />
+        </template>
       </main>
 
       <aside class="toc" aria-label="本页目录">
         <p class="toc__label">本页</p>
-        <a href="#main-content" aria-current="location">工程基线</a>
+        <template v-if="currentDocument?.headings?.length">
+          <a
+            v-for="heading in currentDocument.headings"
+            :key="heading.id"
+            :href="`#${heading.id}`"
+            :style="{ paddingLeft: `${Math.max(1, heading.level - 1) * 0.75}rem` }"
+          >
+            {{ heading.text }}
+          </a>
+        </template>
+        <span v-else class="toc__empty">暂无目录</span>
       </aside>
     </div>
   </div>

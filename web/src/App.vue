@@ -71,6 +71,7 @@ const adminDocuments = ref<AdminDocumentSummary[]>([]);
 const adminSelectedPath = ref("");
 const adminEditingPath = ref("");
 const adminDocumentTitle = ref("");
+const adminDirectory = ref("");
 const adminDocumentFrontMatter = ref("");
 const adminDocumentContent = ref("");
 const adminDocumentHash = ref("");
@@ -87,6 +88,31 @@ const flattenedTree = computed(() => {
   };
   visit(tree.value, 0);
   return result;
+});
+
+const adminDirectoryOptions = computed(() => {
+  const directories = new Set<string>([""]);
+  for (const document of adminDocuments.value) {
+    const parts = document.path.split("/");
+    parts.pop();
+    for (let index = 1; index <= parts.length; index += 1) directories.add(parts.slice(0, index).join("/"));
+  }
+  return [...directories].sort((left, right) => left.localeCompare(right, "zh-CN"));
+});
+
+const adminGeneratedPath = computed(() => {
+  if (adminSelectedPath.value) return adminSelectedPath.value;
+  const slug = adminSlugFromTitle(adminDocumentTitle.value) || "new-document";
+  const directory = adminDirectory.value.replace(/^\/+|\/+$/g, "");
+  const prefix = directory ? `${directory}/` : "";
+  const occupied = new Set(adminDocuments.value.map((document) => document.path));
+  let candidate = `${prefix}${slug}.md`;
+  let suffix = 2;
+  while (occupied.has(candidate)) {
+    candidate = `${prefix}${slug}-${suffix}.md`;
+    suffix += 1;
+  }
+  return candidate;
 });
 
 const selectedPath = computed(() => currentDocument.value?.path ?? "");
@@ -299,6 +325,7 @@ async function selectAdminDocument(path: string) {
     const contentParts = adminSplitContent(payload.content);
     adminSelectedPath.value = payload.path;
     adminEditingPath.value = payload.path;
+    adminDirectory.value = adminDirectoryFromPath(payload.path);
     adminDocumentTitle.value = adminTitleFromContent(payload.content, adminDocuments.value.find((item) => item.path === payload.path)?.title);
     adminDocumentFrontMatter.value = contentParts.metadata;
     adminDocumentContent.value = contentParts.body;
@@ -312,12 +339,28 @@ async function selectAdminDocument(path: string) {
 
 function startNewAdminDocument() {
   adminSelectedPath.value = "";
-  adminEditingPath.value = "new-document.md";
+  adminEditingPath.value = "";
   adminDocumentTitle.value = "新文档";
+  adminDirectory.value = "";
   adminDocumentFrontMatter.value = "title: 新文档";
   adminDocumentContent.value = "开始写作。\n";
   adminDocumentHash.value = "";
   adminDocumentError.value = "";
+}
+
+function adminDirectoryFromPath(path: string) {
+  const separator = path.lastIndexOf("/");
+  return separator === -1 ? "" : path.slice(0, separator);
+}
+
+function adminSlugFromTitle(title: string) {
+  return title
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}_-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function adminSplitContent(content: string) {
@@ -347,9 +390,9 @@ function adminContentWithTitle(content: string, title: string, metadata: string)
 }
 
 async function saveAdminDocument() {
-  const path = adminEditingPath.value.trim();
+  const path = (adminSelectedPath.value || adminGeneratedPath.value).trim();
   if (!path) {
-    adminDocumentError.value = "请输入 Markdown 文件路径。";
+    adminDocumentError.value = "无法生成文档标识，请检查标题。";
     return;
   }
   const title = adminDocumentTitle.value.trim();
@@ -485,9 +528,12 @@ onBeforeUnmount(() => {
             <label for="admin-document-title">页面标题</label>
             <input id="admin-document-title" v-model="adminDocumentTitle" required placeholder="例如：部署指南" :disabled="adminDocumentBusy">
             <p class="admin-field-help">阅读页面显示的标题，保存时会写入 Markdown 的 <code>title</code> 元数据。</p>
-            <label for="admin-document-path">存储路径</label>
-            <input id="admin-document-path" v-model="adminEditingPath" required placeholder="例如：guides/intro.md" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy">
-            <p class="admin-field-help">用于文件存储和访问地址，是文档的唯一标识；不会替代页面标题。</p>
+            <label for="admin-document-directory">所属目录</label>
+            <select id="admin-document-directory" v-model="adminDirectory" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy">
+              <option v-for="directory in adminDirectoryOptions" :key="directory" :value="directory">{{ directory || '文档根目录' }}</option>
+            </select>
+            <p class="admin-field-help">新文档会根据标题自动生成文件名；已存在文档保持原有位置和访问地址。</p>
+            <p class="admin-path-preview"><span>系统文件标识</span><code>{{ adminGeneratedPath }}</code></p>
             <label for="admin-document-content">Markdown 内容</label>
             <textarea id="admin-document-content" v-model="adminDocumentContent" rows="20" spellcheck="false" :disabled="adminDocumentBusy"></textarea>
             <p class="admin-field-help">这里只编辑正文；标题和其他元数据会在保存时保留并自动同步。</p>

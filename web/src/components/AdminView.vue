@@ -540,7 +540,7 @@ function adminSlugFromTitle(title: string) {
 }
 
 function adminSplitContent(content: string) {
-  const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
   return { metadata: frontMatter?.[1] ?? "", body: frontMatter ? content.slice(frontMatter[0].length) : content };
 }
 
@@ -557,7 +557,7 @@ function adminMetadataFromFrontMatter(metadata: string): AdminDocumentMetadata {
 }
 
 function adminTitleFromContent(content: string, fallback = "") {
-  const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
   const titleLine = frontMatter?.[1].match(/^title\s*:\s*(.+?)\s*$/m)?.[1]?.trim();
   if (titleLine) {
     if (titleLine.startsWith("'") && titleLine.endsWith("'")) return titleLine.slice(1, -1).replaceAll("''", "'").trim();

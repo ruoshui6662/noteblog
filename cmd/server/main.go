@@ -228,6 +228,7 @@ type adminDocumentWriteRequest struct {
 	Path         string `json:"path"`
 	Content      string `json:"content"`
 	ExpectedHash string `json:"expected_hash"`
+	Metadata     *content.SourceMetadata `json:"metadata,omitempty"`
 }
 
 type adminDocumentSummary struct {
@@ -330,7 +331,12 @@ func (s *server) adminDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("ETag", `"`+hash+`"`)
-	writeJSON(w, http.StatusOK, map[string]string{"path": path, "content": source, "hash": hash})
+	metadata, err := content.ParseSourceMetadata([]byte(source))
+	if err != nil {
+		writeDocumentError(w, fmt.Errorf("%w: %v", content.ErrInvalidDocument, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "content": source, "hash": hash, "metadata": metadata})
 }
 
 func (s *server) adminCreateDocument(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +351,12 @@ func (s *server) adminCreateDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT_PATH", "文档路径不能为空")
 		return
 	}
-	document, err := s.store.CreateSource(request.Path, []byte(request.Content))
+	source, err := documentSourceForRequest(request)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	document, err := s.store.CreateSource(request.Path, source)
 	if err != nil {
 		writeDocumentError(w, err)
 		return
@@ -368,13 +379,33 @@ func (s *server) adminUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusPreconditionRequired, "VERSION_REQUIRED", "更新文档必须提供 If-Match 版本")
 		return
 	}
-	document, err := s.store.UpdateSource(path, []byte(request.Content), expectedHash)
+	source, err := documentSourceForRequest(request)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	document, err := s.store.UpdateSource(path, source, expectedHash)
 	if err != nil {
 		writeDocumentError(w, err)
 		return
 	}
 	setDocumentETag(w, document.Hash)
 	writeJSON(w, http.StatusOK, document)
+}
+
+func documentSourceForRequest(request adminDocumentWriteRequest) ([]byte, error) {
+	source := []byte(request.Content)
+	if request.Metadata == nil {
+		return source, nil
+	}
+	if strings.TrimSpace(request.Metadata.Title) == "" {
+		return nil, fmt.Errorf("%w: title is required", content.ErrInvalidDocument)
+	}
+	updated, err := content.SetSourceMetadata(source, *request.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", content.ErrInvalidDocument, err)
+	}
+	return updated, nil
 }
 
 func (s *server) adminDeleteDocument(w http.ResponseWriter, r *http.Request) {

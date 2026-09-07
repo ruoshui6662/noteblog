@@ -15,6 +15,13 @@ type AdminDocumentSummary = {
   hash: string;
   draft: boolean;
 };
+type AdminDocumentMetadata = {
+  title: string;
+  description: string;
+  tags: string[];
+  draft: boolean;
+  order: number;
+};
 
 
 const adminMode = ref<"checking" | "setup" | "login" | "authenticated">("checking");
@@ -30,7 +37,10 @@ const adminSelectedPath = ref("");
 const adminEditingPath = ref("");
 const adminDocumentTitle = ref("");
 const adminDirectory = ref("");
-const adminDocumentFrontMatter = ref("");
+const adminDocumentDescription = ref("");
+const adminDocumentTags = ref("");
+const adminDocumentDraft = ref(false);
+const adminDocumentOrder = ref(0);
 const adminDocumentContent = ref("");
 const adminDocumentHash = ref("");
 const adminDocumentBusy = ref(false);
@@ -68,7 +78,10 @@ const adminDocumentFingerprint = computed(() => JSON.stringify({
   path: adminSelectedPath.value,
   title: adminDocumentTitle.value,
   directory: adminDirectory.value,
-  metadata: adminDocumentFrontMatter.value,
+  description: adminDocumentDescription.value,
+  tags: adminDocumentTags.value,
+  draft: adminDocumentDraft.value,
+  order: adminDocumentOrder.value,
   content: adminDocumentContent.value,
 }));
 
@@ -469,13 +482,17 @@ async function selectAdminDocument(path: string) {
   try {
     const response = await fetch(`/api/v1/admin/docs/${path.split("/").map(encodeURIComponent).join("/")}`);
     if (!response.ok) throw new Error("无法读取文档内容");
-    const payload = (await response.json()) as { path: string; content: string; hash: string };
+    const payload = (await response.json()) as { path: string; content: string; hash: string; metadata?: Partial<AdminDocumentMetadata> };
     const contentParts = adminSplitContent(payload.content);
+    const metadata = payload.metadata ?? adminMetadataFromFrontMatter(contentParts.metadata);
     adminSelectedPath.value = payload.path;
     adminEditingPath.value = payload.path;
     adminDirectory.value = adminDirectoryFromPath(payload.path);
-    adminDocumentTitle.value = adminTitleFromContent(payload.content, adminDocuments.value.find((item) => item.path === payload.path)?.title);
-    adminDocumentFrontMatter.value = contentParts.metadata;
+    adminDocumentTitle.value = metadata.title || adminTitleFromContent(payload.content, adminDocuments.value.find((item) => item.path === payload.path)?.title);
+    adminDocumentDescription.value = metadata.description ?? "";
+    adminDocumentTags.value = (metadata.tags ?? []).join(", ");
+    adminDocumentDraft.value = Boolean(metadata.draft);
+    adminDocumentOrder.value = Number(metadata.order) || 0;
     adminDocumentContent.value = contentParts.body;
     adminDocumentHash.value = payload.hash;
     adminActiveCategoryPath.value = "";
@@ -496,7 +513,10 @@ function startNewAdminDocument() {
   adminEditingPath.value = "";
   adminDocumentTitle.value = "新文档";
   adminDirectory.value = "";
-  adminDocumentFrontMatter.value = "title: 新文档";
+  adminDocumentDescription.value = "";
+  adminDocumentTags.value = "";
+  adminDocumentDraft.value = false;
+  adminDocumentOrder.value = 0;
   adminDocumentContent.value = "开始写作。\n";
   adminDocumentHash.value = "";
   adminDocumentError.value = "";
@@ -524,6 +544,18 @@ function adminSplitContent(content: string) {
   return { metadata: frontMatter?.[1] ?? "", body: frontMatter ? content.slice(frontMatter[0].length) : content };
 }
 
+function adminMetadataFromFrontMatter(metadata: string): AdminDocumentMetadata {
+  const readScalar = (key: string) => metadata.match(new RegExp(`^${key}\\s*:\\s*(.+?)\\s*$`, "m"))?.[1]?.trim() ?? "";
+  const tagsValue = readScalar("tags").replace(/^\[|\]$/g, "");
+  return {
+    title: readScalar("title").replace(/^['"]|['"]$/g, "").trim(),
+    description: readScalar("description").replace(/^['"]|['"]$/g, "").trim(),
+    tags: tagsValue ? tagsValue.split(",").map(tag => tag.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean) : [],
+    draft: /^true$/i.test(readScalar("draft")),
+    order: Number(readScalar("order")) || 0,
+  };
+}
+
 function adminTitleFromContent(content: string, fallback = "") {
   const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   const titleLine = frontMatter?.[1].match(/^title\s*:\s*(.+?)\s*$/m)?.[1]?.trim();
@@ -534,15 +566,6 @@ function adminTitleFromContent(content: string, fallback = "") {
   }
   const heading = content.match(/^#\s+(.+?)\s*$/m)?.[1]?.trim();
   return heading || fallback || "未命名文档";
-}
-
-function adminContentWithTitle(content: string, title: string, metadata: string) {
-  const safeTitle = title.trim().replace(/[\r\n]+/g, " ");
-  const yamlTitle = `'${safeTitle.replaceAll("'", "''")}'`;
-  const nextMetadata = /^title\s*:/m.test(metadata)
-    ? metadata.replace(/^title\s*:.+$/m, `title: ${yamlTitle}`)
-    : `title: ${yamlTitle}\n${metadata}`;
-  return `---\n${nextMetadata}\n---\n${content}`;
 }
 
 async function saveAdminDocument() {
@@ -566,7 +589,17 @@ async function saveAdminDocument() {
     const response = await fetch(url, {
       method: isNew ? "POST" : "PUT",
       headers,
-      body: JSON.stringify({ path: isNew ? path : undefined, content: adminContentWithTitle(adminDocumentContent.value, title, adminDocumentFrontMatter.value) }),
+      body: JSON.stringify({
+        path: isNew ? path : undefined,
+        content: adminDocumentContent.value,
+        metadata: {
+          title,
+          description: adminDocumentDescription.value.trim(),
+          tags: adminDocumentTags.value.split(",").map(tag => tag.trim()).filter(Boolean),
+          draft: adminDocumentDraft.value,
+          order: Number(adminDocumentOrder.value) || 0,
+        },
+      }),
     });
     const payload = (await response.json().catch(() => ({}))) as { path?: string; hash?: string; error?: { message?: string } };
     if (!response.ok) {
@@ -686,7 +719,7 @@ onMounted(() => void loadAdmin());
             <div class="admin-inspector__tabs"><button type="button" :class="{ 'is-active': adminPanel === 'preview' }" @click="adminPanel = 'preview'">预览</button><button type="button" :class="{ 'is-active': adminPanel === 'properties' }" @click="adminPanel = 'properties'">属性</button></div>
             <div v-if="adminPanel === 'preview'" class="admin-preview"><div class="admin-preview__meta"><span>实时预览</span><span>{{ adminDocumentDirty ? '草稿' : '已保存' }}</span></div><article class="admin-preview__body" v-html="adminPreviewHTML"></article></div>
             <div v-else-if="adminActiveCategoryPath || adminCategoryIsNew" class="admin-inspector__content"><p class="admin-eyebrow">目录设置</p><h2>{{ adminCategoryIsNew ? '新建目录' : adminCategoryTitle }}</h2><form class="admin-category-form admin-category-form--inspector" @submit.prevent="saveAdminCategory"><label for="admin-category-path">目录路径</label><input id="admin-category-path" v-model="adminCategoryPath" placeholder="例如：getting-started" :disabled="adminCategoryBusy || !adminCategoryIsNew"><label for="admin-category-title">显示名称</label><input id="admin-category-title" v-model="adminCategoryTitle" required placeholder="例如：快速开始" :disabled="adminCategoryBusy"><label for="admin-category-description">目录说明</label><textarea id="admin-category-description" v-model="adminCategoryDescription" rows="3" placeholder="在首页分类卡片中显示" :disabled="adminCategoryBusy"></textarea><div class="admin-category-options"><label for="admin-category-order">排序</label><input id="admin-category-order" v-model.number="adminCategoryOrder" type="number" min="0" step="1" :disabled="adminCategoryBusy"><label class="admin-checkbox"><input v-model="adminCategoryCollapsed" type="checkbox" :disabled="adminCategoryBusy"> 默认折叠</label></div><p v-if="adminCategoryError" class="admin-feedback admin-feedback--error" role="alert">{{ adminCategoryError }}</p><button class="admin-workspace__primary admin-workspace__primary--wide" type="submit" :disabled="adminCategoryBusy">{{ adminCategoryBusy ? '保存中…' : '保存目录设置' }}</button></form></div>
-            <div v-else class="admin-inspector__content"><p class="admin-eyebrow">文档属性</p><h2>{{ adminDocumentTitle || '未命名文档' }}</h2><label class="admin-property-label" for="admin-document-directory">所属目录</label><select id="admin-document-directory" v-model="adminDirectory" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy"><option v-for="directory in adminDirectoryOptions" :key="directory" :value="directory">{{ directory || '文档根目录' }}</option></select><p class="admin-field-help">新文档会根据标题生成文件名；已存在文档保持原有路径。</p><label class="admin-property-label" for="admin-document-front-matter">文档元数据</label><textarea id="admin-document-front-matter" v-model="adminDocumentFrontMatter" rows="8" :disabled="adminDocumentBusy" placeholder="description: 文档说明&#10;tags: [指南]"></textarea><p class="admin-path-preview"><span>文件标识</span><code>{{ adminSelectedPath || adminGeneratedPath }}</code></p><button v-if="adminSelectedPath" class="admin-danger-button" type="button" :disabled="adminDocumentBusy" @click="deleteAdminDocument">删除文档</button></div>
+            <div v-else class="admin-inspector__content"><p class="admin-eyebrow">文档属性</p><h2>{{ adminDocumentTitle || '未命名文档' }}</h2><label class="admin-property-label" for="admin-document-directory">所属目录</label><select id="admin-document-directory" v-model="adminDirectory" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy"><option v-for="directory in adminDirectoryOptions" :key="directory" :value="directory">{{ directory || '文档根目录' }}</option></select><p class="admin-field-help">新文档会根据标题生成文件名；已存在文档保持原有路径。</p><label class="admin-property-label" for="admin-document-description">摘要</label><textarea id="admin-document-description" v-model="adminDocumentDescription" rows="3" :disabled="adminDocumentBusy" placeholder="用一句话说明这篇文档"></textarea><label class="admin-property-label" for="admin-document-tags">标签</label><input id="admin-document-tags" v-model="adminDocumentTags" :disabled="adminDocumentBusy" placeholder="指南, Docker"><label class="admin-property-label" for="admin-document-order">排序</label><input id="admin-document-order" v-model.number="adminDocumentOrder" type="number" min="0" step="1" :disabled="adminDocumentBusy"><label class="admin-checkbox"><input v-model="adminDocumentDraft" type="checkbox" :disabled="adminDocumentBusy"> 保存为草稿（不在公共文档树显示）</label><p class="admin-field-help">属性与正文使用同一次保存，系统会保留未编辑的自定义元数据。</p><p class="admin-path-preview"><span>文件标识</span><code>{{ adminSelectedPath || adminGeneratedPath }}</code></p><button v-if="adminSelectedPath" class="admin-danger-button" type="button" :disabled="adminDocumentBusy" @click="deleteAdminDocument">删除文档</button></div>
           </aside>
         </div>
       </section>

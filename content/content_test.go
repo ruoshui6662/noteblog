@@ -221,6 +221,44 @@ func TestAdminCategoriesWriteFilesystemMetadata(t *testing.T) {
 	}
 }
 
+func TestSourceMetadataRoundTripPreservesUnknownFields(t *testing.T) {
+	source := []byte("---\ntitle: 旧标题\nslug: custom-route.md\nowner: docs\ntags: [旧, 旧]\n---\n\n正文。\n")
+	metadata, err := ParseSourceMetadata(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "旧标题" || len(metadata.Tags) != 1 {
+		t.Fatalf("ParseSourceMetadata() = %#v", metadata)
+	}
+	updated, err := SetSourceMetadata(source, SourceMetadata{Title: "新标题", Description: "说明", Tags: []string{"指南", "指南", "Docker"}, Draft: true, Order: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	for _, expected := range []string{"title: 新标题", "description: 说明", "draft: true", "order: 3", "slug: custom-route.md", "owner: docs", "- 指南", "- Docker", "正文。"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("updated source missing %q: %s", expected, text)
+		}
+	}
+	parsed, err := ParseSourceMetadata(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Title != "新标题" || parsed.Description != "说明" || !parsed.Draft || parsed.Order != 3 || strings.Join(parsed.Tags, ",") != "指南,Docker" {
+		t.Fatalf("round trip metadata = %#v", parsed)
+	}
+}
+
+func TestSetSourceMetadataCreatesFrontMatterForPlainMarkdown(t *testing.T) {
+	updated, err := SetSourceMetadata([]byte("# 正文\n"), SourceMetadata{Title: "无元数据", Description: "", Tags: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(updated), "---\n") || !strings.Contains(string(updated), "title: 无元数据") || !strings.HasSuffix(string(updated), "# 正文\n") {
+		t.Fatalf("created source = %q", updated)
+	}
+}
+
 func TestMalformedDocumentIsExcludedAndReported(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "broken.md", "---\ntitle: missing close\n# body\n")

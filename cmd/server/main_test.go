@@ -129,7 +129,7 @@ func TestAdminDocumentAPIRequiresSessionAndUsesVersions(t *testing.T) {
 		t.Fatalf("login = %d %s", login.Code, login.Body.String())
 	}
 	cookie := login.Result().Cookies()[0]
-	request := httptest.NewRequest("POST", "/api/v1/admin/docs", strings.NewReader(`{"path":"managed.md","content":"# 第一版\n"}`))
+	request := httptest.NewRequest("POST", "/api/v1/admin/docs", strings.NewReader(`{"path":"managed.md","content":"# 第一版\n","metadata":{"title":"管理文档","description":"结构化说明","tags":["指南","Docker"],"draft":true,"order":2}}`))
 	request.AddCookie(cookie)
 	created := httptest.NewRecorder()
 	handler.ServeHTTP(created, request)
@@ -144,6 +144,13 @@ func TestAdminDocumentAPIRequiresSessionAndUsesVersions(t *testing.T) {
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), "managed.md") {
 		t.Fatalf("list = %d %s", listed.Code, listed.Body.String())
 	}
+	detailRequest := httptest.NewRequest("GET", "/api/v1/admin/docs/managed.md", nil)
+	detailRequest.AddCookie(cookie)
+	detail := httptest.NewRecorder()
+	handler.ServeHTTP(detail, detailRequest)
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"description":"结构化说明"`) || !strings.Contains(detail.Body.String(), "title: 管理文档") {
+		t.Fatalf("detail metadata = %d %s", detail.Code, detail.Body.String())
+	}
 	staleRequest := httptest.NewRequest("PUT", "/api/v1/admin/docs/managed.md", strings.NewReader(`{"content":"# 错误版本\n"}`))
 	staleRequest.Header.Set("If-Match", `"stale"`)
 	staleRequest.AddCookie(cookie)
@@ -152,7 +159,7 @@ func TestAdminDocumentAPIRequiresSessionAndUsesVersions(t *testing.T) {
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("stale update = %d %s", stale.Code, stale.Body.String())
 	}
-	updateRequest := httptest.NewRequest("PUT", "/api/v1/admin/docs/managed.md", strings.NewReader(`{"content":"# 第二版\n"}`))
+	updateRequest := httptest.NewRequest("PUT", "/api/v1/admin/docs/managed.md", strings.NewReader(`{"content":"# 第二版\n","metadata":{"title":"第二版标题","description":"更新后的说明","tags":["更新"],"draft":false,"order":4}}`))
 	updateRequest.Header.Set("If-Match", createdETag)
 	updateRequest.AddCookie(cookie)
 	updated := httptest.NewRecorder()

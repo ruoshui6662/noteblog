@@ -69,6 +69,90 @@ type Category struct {
 	Collapsed   bool   `json:"collapsed"`
 }
 
+// SourceMetadata contains the structured fields stored in a document's YAML
+// front matter. Keeping this model in content prevents each API client from
+// hand-editing YAML and accidentally corrupting unknown fields.
+type SourceMetadata struct {
+	Title       string   `json:"title" yaml:"title"`
+	Description string   `json:"description,omitempty" yaml:"description"`
+	Order       int      `json:"order" yaml:"order"`
+	Draft       bool     `json:"draft" yaml:"draft"`
+	Tags        []string `json:"tags,omitempty" yaml:"tags"`
+}
+
+// ParseSourceMetadata reads the editable metadata from a Markdown source.
+// Unknown front-matter keys are intentionally ignored by this projection; the
+// write path below preserves them when updating the known fields.
+func ParseSourceMetadata(data []byte) (SourceMetadata, error) {
+	metadata, _, err := parseFrontMatter(data)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	return SourceMetadata{
+		Title:       strings.TrimSpace(metadata.Title),
+		Description: strings.TrimSpace(metadata.Description),
+		Order:       metadata.Order,
+		Draft:       metadata.Draft,
+		Tags:        normalizeTags(metadata.Tags),
+	}, nil
+}
+
+// SetSourceMetadata updates the supported front-matter fields while retaining
+// unknown keys such as slug or custom integration metadata. The Markdown body
+// remains untouched apart from normalizing CRLF to LF.
+func SetSourceMetadata(data []byte, metadata SourceMetadata) ([]byte, error) {
+	values, body, err := sourceFrontMatterMap(data)
+	if err != nil {
+		return nil, err
+	}
+	metadata.Title = strings.TrimSpace(metadata.Title)
+	metadata.Description = strings.TrimSpace(metadata.Description)
+	metadata.Tags = normalizeTags(metadata.Tags)
+	values["title"] = metadata.Title
+	if metadata.Description == "" {
+		delete(values, "description")
+	} else {
+		values["description"] = metadata.Description
+	}
+	if metadata.Order == 0 {
+		delete(values, "order")
+	} else {
+		values["order"] = metadata.Order
+	}
+	if !metadata.Draft {
+		delete(values, "draft")
+	} else {
+		values["draft"] = true
+	}
+	if len(metadata.Tags) == 0 {
+		delete(values, "tags")
+	} else {
+		values["tags"] = metadata.Tags
+	}
+	encoded, err := yaml.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("encode front matter: %w", err)
+	}
+	return append([]byte("---\n"), append(encoded, append([]byte("---\n"), body...)...)...), nil
+}
+
+func normalizeTags(tags []string) []string {
+	result := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		seen[tag] = struct{}{}
+		result = append(result, tag)
+	}
+	return result
+}
+
 type Issue struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
@@ -1001,6 +1085,32 @@ func parseFrontMatter(data []byte) (frontMatter, []byte, error) {
 		return frontMatter{}, nil, fmt.Errorf("invalid front matter: %w", err)
 	}
 	return metadata, []byte(strings.Join(lines[end+1:], "\n")), nil
+}
+
+func sourceFrontMatterMap(data []byte) (map[string]any, []byte, error) {
+	if !bytes.HasPrefix(data, []byte("---\n")) && !bytes.HasPrefix(data, []byte("---\r\n")) {
+		return map[string]any{}, data, nil
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	end := -1
+	for index := 1; index < len(lines); index++ {
+		if strings.TrimSpace(lines[index]) == "---" || strings.TrimSpace(lines[index]) == "..." {
+			end = index
+			break
+		}
+	}
+	if end == -1 {
+		return nil, nil, errors.New("front matter is not closed")
+	}
+	values := make(map[string]any)
+	block := strings.Join(lines[1:end], "\n")
+	if strings.TrimSpace(block) != "" {
+		if err := yaml.Unmarshal([]byte(block), &values); err != nil {
+			return nil, nil, fmt.Errorf("invalid front matter: %w", err)
+		}
+	}
+	return values, []byte(strings.Join(lines[end+1:], "\n")), nil
 }
 
 func renderMarkdown(body []byte) (string, []Heading) {

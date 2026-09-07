@@ -21,15 +21,16 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -buildvcs=false -tags production -trimpath -ldflags="-s -w" -o /out/markdown-docs ./cmd/server
 
 FROM alpine:3.23 AS runtime
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates su-exec \
     && addgroup -g 10001 app \
     && adduser -D -H -u 10001 -G app app \
     && mkdir -p /data/content /data/media /data/backups \
     && chown -R 10001:10001 /data
 COPY --from=backend /out/markdown-docs /usr/local/bin/markdown-docs
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint
+RUN chmod 0755 /usr/local/bin/docker-entrypoint
 ENV APP_ADDR=0.0.0.0:8080 APP_DATA_DIR=/data APP_ENV=container
-USER 10001:10001
 WORKDIR /data
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/markdown-docs", "healthcheck"]
-ENTRYPOINT ["/usr/local/bin/markdown-docs"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]

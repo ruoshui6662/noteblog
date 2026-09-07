@@ -182,6 +182,20 @@ button:focus-visible,
 
 .admin-editor-form label { color: var(--color-text-secondary); font-size: 0.875rem; font-weight: 600; }
 
+.admin-field-help {
+  margin: calc(var(--space-2) * -1) 0 var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.admin-field-help code {
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-selected);
+  padding: 0.0625rem 0.25rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+}
+
 .admin-editor-form input,
 .admin-editor-form textarea {
   width: 100%;

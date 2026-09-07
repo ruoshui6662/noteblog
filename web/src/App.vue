@@ -70,6 +70,8 @@ const adminMessage = ref("");
 const adminDocuments = ref<AdminDocumentSummary[]>([]);
 const adminSelectedPath = ref("");
 const adminEditingPath = ref("");
+const adminDocumentTitle = ref("");
+const adminDocumentFrontMatter = ref("");
 const adminDocumentContent = ref("");
 const adminDocumentHash = ref("");
 const adminDocumentBusy = ref(false);
@@ -294,9 +296,12 @@ async function selectAdminDocument(path: string) {
     const response = await fetch(`/api/v1/admin/docs/${path.split("/").map(encodeURIComponent).join("/")}`);
     if (!response.ok) throw new Error("无法读取文档内容");
     const payload = (await response.json()) as { path: string; content: string; hash: string };
+    const contentParts = adminSplitContent(payload.content);
     adminSelectedPath.value = payload.path;
     adminEditingPath.value = payload.path;
-    adminDocumentContent.value = payload.content;
+    adminDocumentTitle.value = adminTitleFromContent(payload.content, adminDocuments.value.find((item) => item.path === payload.path)?.title);
+    adminDocumentFrontMatter.value = contentParts.metadata;
+    adminDocumentContent.value = contentParts.body;
     adminDocumentHash.value = payload.hash;
   } catch (error) {
     adminDocumentError.value = error instanceof Error ? error.message : "无法读取文档内容";
@@ -308,15 +313,48 @@ async function selectAdminDocument(path: string) {
 function startNewAdminDocument() {
   adminSelectedPath.value = "";
   adminEditingPath.value = "new-document.md";
-  adminDocumentContent.value = "---\ntitle: 新文档\n---\n\n开始写作。\n";
+  adminDocumentTitle.value = "新文档";
+  adminDocumentFrontMatter.value = "title: 新文档";
+  adminDocumentContent.value = "开始写作。\n";
   adminDocumentHash.value = "";
   adminDocumentError.value = "";
+}
+
+function adminSplitContent(content: string) {
+  const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  return { metadata: frontMatter?.[1] ?? "", body: frontMatter ? content.slice(frontMatter[0].length) : content };
+}
+
+function adminTitleFromContent(content: string, fallback = "") {
+  const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const titleLine = frontMatter?.[1].match(/^title\s*:\s*(.+?)\s*$/m)?.[1]?.trim();
+  if (titleLine) {
+    if (titleLine.startsWith("'") && titleLine.endsWith("'")) return titleLine.slice(1, -1).replaceAll("''", "'").trim();
+    if (titleLine.startsWith('"') && titleLine.endsWith('"')) return titleLine.slice(1, -1).trim();
+    return titleLine;
+  }
+  const heading = content.match(/^#\s+(.+?)\s*$/m)?.[1]?.trim();
+  return heading || fallback || "未命名文档";
+}
+
+function adminContentWithTitle(content: string, title: string, metadata: string) {
+  const safeTitle = title.trim().replace(/[\r\n]+/g, " ");
+  const yamlTitle = `'${safeTitle.replaceAll("'", "''")}'`;
+  const nextMetadata = /^title\s*:/m.test(metadata)
+    ? metadata.replace(/^title\s*:.+$/m, `title: ${yamlTitle}`)
+    : `title: ${yamlTitle}\n${metadata}`;
+  return `---\n${nextMetadata}\n---\n${content}`;
 }
 
 async function saveAdminDocument() {
   const path = adminEditingPath.value.trim();
   if (!path) {
     adminDocumentError.value = "请输入 Markdown 文件路径。";
+    return;
+  }
+  const title = adminDocumentTitle.value.trim();
+  if (!title) {
+    adminDocumentError.value = "请输入文档标题。";
     return;
   }
   adminDocumentBusy.value = true;
@@ -329,7 +367,7 @@ async function saveAdminDocument() {
     const response = await fetch(url, {
       method: isNew ? "POST" : "PUT",
       headers,
-      body: JSON.stringify({ path: isNew ? path : undefined, content: adminDocumentContent.value }),
+      body: JSON.stringify({ path: isNew ? path : undefined, content: adminContentWithTitle(adminDocumentContent.value, title, adminDocumentFrontMatter.value) }),
     });
     const payload = (await response.json().catch(() => ({}))) as { path?: string; hash?: string; error?: { message?: string } };
     if (!response.ok) {
@@ -444,10 +482,15 @@ onBeforeUnmount(() => {
             <p v-if="!adminDocuments.length" class="sidebar__empty">暂无文档</p>
           </aside>
           <form class="admin-editor-form" @submit.prevent="saveAdminDocument">
-            <label for="admin-document-path">文件路径</label>
-            <input id="admin-document-path" v-model="adminEditingPath" required placeholder="例如：guides/intro.md" :disabled="Boolean(adminSelectedPath)">
+            <label for="admin-document-title">页面标题</label>
+            <input id="admin-document-title" v-model="adminDocumentTitle" required placeholder="例如：部署指南" :disabled="adminDocumentBusy">
+            <p class="admin-field-help">阅读页面显示的标题，保存时会写入 Markdown 的 <code>title</code> 元数据。</p>
+            <label for="admin-document-path">存储路径</label>
+            <input id="admin-document-path" v-model="adminEditingPath" required placeholder="例如：guides/intro.md" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy">
+            <p class="admin-field-help">用于文件存储和访问地址，是文档的唯一标识；不会替代页面标题。</p>
             <label for="admin-document-content">Markdown 内容</label>
             <textarea id="admin-document-content" v-model="adminDocumentContent" rows="20" spellcheck="false" :disabled="adminDocumentBusy"></textarea>
+            <p class="admin-field-help">这里只编辑正文；标题和其他元数据会在保存时保留并自动同步。</p>
             <p v-if="adminDocumentError" class="admin-feedback admin-feedback--error" role="alert">{{ adminDocumentError }}</p>
             <div class="admin-editor-actions">
               <button class="admin-button" type="submit" :disabled="adminDocumentBusy">{{ adminDocumentBusy ? '处理中…' : '保存文档' }}</button>

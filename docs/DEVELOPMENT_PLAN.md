@@ -764,6 +764,8 @@ docs(plan): update fnOS release checklist
 
 ## 20. Docker 设计
 
+管理端工作区的布局、按钮操作契约、状态模型和分阶段实现路线见 [管理端工作区设计与开发规划](ADMIN_WORKSPACE_PLAN.md)。进入实现前，必须先按该文档完成 P0 契约和状态骨架。
+
 ### 20.1 多阶段镜像
 
 ```text

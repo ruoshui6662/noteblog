@@ -43,9 +43,9 @@ curl --fail --silent "http://${address}/api/v1/site" | grep -q 'container'
 test "$(curl -s -o /dev/null -w '%{http_code}' "http://${address}/api/v1/missing")" = 404
 test "$(curl -s -o /dev/null -w '%{http_code}' "http://${address}/assets/missing.js")" = 404
 # The image starts as root only for bind-mount preparation, then execs the
-# actual HTTP process as 10001. Check the running process rather than the
+# actual HTTP process as 10001. Read PID 1's effective UID rather than the
 # default user used by a new docker exec session.
-docker top "$name" -eo uid | awk 'NR > 1 && $1 == "10001" { found = 1 } END { exit(found ? 0 : 1) }'
+test "$(docker exec "$name" awk '/^Uid:/{print $2}' /proc/1/status)" = 10001
 docker exec "$name" sh -c 'test -d /data/content && test -d /data/media && test -d /data/backups; echo retained > /data/content/smoke.txt; echo attachment > /data/media/smoke.txt'
 test "$(curl --fail --silent "http://${address}/media/smoke.txt")" = attachment
 test "$(curl -s -o /dev/null -w '%{http_code}' "http://${address}/media/../content/smoke.txt")" = 404

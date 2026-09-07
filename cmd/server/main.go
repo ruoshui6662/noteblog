@@ -90,7 +90,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("GET /api/v1/docs/", s.document)
 	mux.HandleFunc("GET /api/v1/admin/docs", s.adminDocuments)
+	mux.HandleFunc("GET /api/v1/admin/categories", s.adminCategories)
 	mux.HandleFunc("POST /api/v1/admin/docs", s.adminCreateDocument)
+	mux.HandleFunc("POST /api/v1/admin/categories", s.adminUpsertCategory)
 	mux.HandleFunc("GET /api/v1/admin/docs/", s.adminDocument)
 	mux.HandleFunc("PUT /api/v1/admin/docs/", s.adminUpdateDocument)
 	mux.HandleFunc("DELETE /api/v1/admin/docs/", s.adminDeleteDocument)
@@ -232,6 +234,14 @@ type adminDocumentSummary struct {
 	Draft       bool   `json:"draft"`
 }
 
+type adminCategoryWriteRequest struct {
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Order       int    `json:"order"`
+	Collapsed   bool   `json:"collapsed"`
+}
+
 func (s *server) requireAdmin(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 	if s.auth == nil {
 		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
@@ -265,6 +275,38 @@ func (s *server) adminDocuments(w http.ResponseWriter, r *http.Request) {
 		result = append(result, adminDocumentSummary{Path: document.Path, Title: document.Title, Description: document.Description, Hash: document.Hash, Draft: document.Draft})
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) adminCategories(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	categories, err := s.store.AdminCategories()
+	if err != nil {
+		s.logger.Error("failed to list admin categories", "error", err)
+		writeError(w, http.StatusInternalServerError, "CATEGORY_SCAN_FAILED", "无法读取目录列表")
+		return
+	}
+	writeJSON(w, http.StatusOK, categories)
+}
+
+func (s *server) adminUpsertCategory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var request adminCategoryWriteRequest
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_CATEGORY_JSON", "目录请求格式无效")
+		return
+	}
+	category := content.Category{Path: request.Path, Title: request.Title, Description: request.Description, Order: request.Order, Collapsed: request.Collapsed}
+	if err := s.store.UpsertCategory(category); err != nil {
+		writeCategoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, category)
 }
 
 func (s *server) adminDocument(w http.ResponseWriter, r *http.Request) {
@@ -385,6 +427,15 @@ func writeDocumentError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT", "文档路径或内容无效")
 	default:
 		writeError(w, http.StatusInternalServerError, "DOCUMENT_WRITE_FAILED", "文档操作失败")
+	}
+}
+
+func writeCategoryError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, content.ErrInvalidCategory), errors.Is(err, content.ErrUnsafeCategoryPath):
+		writeError(w, http.StatusBadRequest, "INVALID_CATEGORY", "目录名称或配置无效")
+	default:
+		writeError(w, http.StatusInternalServerError, "CATEGORY_WRITE_FAILED", "目录配置保存失败")
 	}
 }
 

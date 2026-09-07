@@ -315,6 +315,7 @@ content/
 
 ```yaml
 title: 快速开始
+description: 从这里开始，找到清晰的说明与指引。
 order: 10
 collapsed: false
 ```
@@ -343,6 +344,8 @@ tags:
 | `slug` | 否 | 默认由相对文件路径生成 |
 
 系统扫描外部 Markdown 时不得擅自修改原文件。缺失字段仅在内存中推导；管理员主动保存时才写入用户确认过的 Front Matter。
+
+分类元数据由管理员通过 `POST /api/v1/admin/categories` 写入对应目录的 `_category.yml`。创建文档时，文档路径决定它所属的分类；因此“快速开始下三个板块、使用指南下两个板块”的实现就是在 `content/快速开始/` 与 `content/使用指南/` 目录中分别放入 3 个和 2 个 Markdown 文件，并用 `_category.yml` 设置分类名称、说明和顺序。
 
 ### 9.2 支持范围
 
@@ -468,6 +471,8 @@ SQLite 初始表：
 | GET | `/api/v1/admin/tree` | 包含草稿的完整树 |
 | GET | `/api/v1/admin/docs/*path` | 获取 Markdown 原文和版本哈希 |
 | POST | `/api/v1/admin/docs` | 新建文档 |
+| GET | `/api/v1/admin/categories` | 获取文件系统分类及展示元数据 |
+| POST | `/api/v1/admin/categories` | 创建目录并写入 `_category.yml` |
 | PUT | `/api/v1/admin/docs/*path` | 保存文档，要求版本匹配 |
 | PATCH | `/api/v1/admin/docs/*path` | 重命名、移动或更新属性 |
 | DELETE | `/api/v1/admin/docs/*path` | 删除文档 |

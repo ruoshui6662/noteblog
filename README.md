@@ -2,11 +2,11 @@
 
 自托管、Markdown 文件原生的文档展示与管理系统。
 
-当前已完成 M0「工程基线」和 M1「阅读端」，正在进入 M2「管理端」：服务可以扫描 `/data/content` 中的 Markdown，生成文档树，统一渲染安全 HTML，提供搜索和受边界保护的媒体读取，并已具备一次性管理员初始化、Argon2id 密码哈希和 SQLite 会话接口。
+当前已完成 M0「工程基线」、M1「阅读端」和 M2「管理端」的首个闭环：服务扫描 `/data/content` 中的 Markdown，生成文档树，统一渲染安全 HTML，提供搜索、管理员认证、文档新建/编辑/删除，以及文件系统分类 `_category.yml` 的创建与维护。
 
 ## Docker / GitHub / 飞牛测试
 
-已提供多阶段 `Dockerfile`、GHCR 双架构构建工作流和飞牛 Compose。Go 在容器中直接提供嵌入的前端页面，数据保存到 `/data`。当前镜像包含 M1 阅读端和 M2 管理员初始化、登录、文档新建、编辑、删除，媒体上传仍在开发。
+已提供多阶段 `Dockerfile`、GHCR 双架构构建工作流和飞牛 Compose。Go 在容器中直接提供嵌入的前端页面，数据保存到 `/data`；Compose 默认将项目目录下的 `data/` 绑定到 `/data`，因此可以直接在 Docker/FnOS 文件管理器中看到 Markdown 和分类文件。当前镜像包含阅读、搜索、管理员初始化、登录、文档新建/编辑/删除和分类设置，媒体上传仍在开发。
 
 完整步骤见 [Docker、GitHub Actions 与飞牛测试指南](docs/DOCKER_GITHUB_FNOS.md)、[M1 阅读端进度](docs/progress/PHASE_01_READER.md) 和 [M2 身份进度](docs/progress/PHASE_02_ADMIN.md)。将项目推送到 GitHub 的 `main` 或 `master` 后，工作流通过检查即发布 `ghcr.io/用户名/仓库名:edge`；飞牛使用 `deploy/compose.yaml` 拉取测试。
 

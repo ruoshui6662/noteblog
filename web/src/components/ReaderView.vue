@@ -188,7 +188,7 @@ onBeforeUnmount(() => { controller?.abort(); request++; closeDrawer(); cancelAni
         <div v-else class="category-grid">
           <section v-for="(group, index) in groups" :key="group.path" class="directory-category">
             <span class="category-number">{{ String(index + 1).padStart(2, '0') }}</span><h3>{{ group.title }}</h3>
-            <p class="category-description">{{ index === 0 ? '从这里开始，找到清晰的说明与指引。' : '按主题浏览，让需要的知识触手可及。' }}</p>
+            <p class="category-description">{{ group.description || (index === 0 ? '从这里开始，找到清晰的说明与指引。' : '按主题浏览，让需要的知识触手可及。') }}</p>
             <a v-for="item in group.documents" :key="item.path" class="directory-link" :href="documentURL(item.path)" @click.prevent="navigate(item.path)"><span>{{ item.title }}</span><AppIcon name="arrow-right" /></a>
           </section>
         </div>

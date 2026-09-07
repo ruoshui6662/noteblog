@@ -1,6 +1,6 @@
 # Docker → GitHub Actions → 飞牛测试
 
-当前镜像是 M0 工程基线测试包：包含前端页面、站点信息 API、健康检查和数据目录初始化。尚未提供 Markdown 阅读、登录、上传或管理功能。此打包工作不表示 M1–M4 产品里程碑已全部完成。
+当前镜像包含阅读端、搜索、管理员认证、文档管理和文件系统分类设置。Markdown 与 `_category.yml` 保存在 `/data/content`，Compose 默认将项目目录下的 `data/` 绑定到该路径，因此容器重建后文件仍可直接查看和备份。
 
 ## 1. 上传到 GitHub
 
@@ -45,7 +45,13 @@ docker login ghcr.io -u YOUR_NAME
 
 ## 3. 飞牛 Compose 安装
 
-将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 已直接写入本仓库的公开镜像和 `8080:8080` 端口映射，不需要 `.env` 文件。
+将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 默认使用项目目录下的 `data/` 绑定目录，并将其映射到容器 `/data`；也可以通过 `DOCS_DATA_DIR` 指定 NAS 上的绝对路径。镜像地址和数据目录都支持环境变量覆盖：
+
+```yaml
+environment:
+  DOCS_IMAGE: ghcr.io/ruoshui6662/noteblog:edge
+  DOCS_DATA_DIR: /vol1/1000/docker/noteblog-data
+```
 
 在飞牛 Docker 项目管理中导入该 Compose 即可。
 
@@ -59,18 +65,16 @@ docker compose ps
 docker compose logs --tail=100
 ```
 
-访问 `http://飞牛IP:8080`，应显示工程基线页面和“服务已就绪：container 环境”。
+访问 `http://飞牛IP:8080`，应显示文档首页和“container”环境状态。
 
-默认采用命名卷，避免 NAS 绑定目录初始权限问题。镜像以 UID/GID `10001:10001` 运行，根文件系统只读，只有数据卷可写。不要执行 `docker compose down -v`，该选项会删除命名卷。更换 Compose 项目名会使用新的卷，迁移时应保留项目名或显式配置已有卷。
-
-如需文件管理器直接看到数据，把 `docs-data:/data` 改为专用 NAS 目录，例如 `/实际存储路径/markdown-docs/data:/data`。先创建该目录并给予 UID/GID 10001 写权限；仅对这个专用目录设置归属，不要修改整个 NAS 共享目录。实际存储路径以飞牛文件管理器显示为准。
+绑定目录中的结构就是应用的真实数据结构：`data/content/` 保存 Markdown 文件和 `_category.yml`，`data/media/` 保存附件，`data/noteblog.db` 保存管理员认证数据。镜像以 UID/GID `10001:10001` 运行，根文件系统只读，只有 `/data` 可写。首次使用前，在飞牛上创建 `DOCS_DATA_DIR` 指定的目录，并给予 UID/GID `10001:10001` 写权限；只修改这个专用目录的归属，不要修改整个 NAS 共享目录。
 
 ## 4. 验收与升级
 
 1. `docker compose ps` 显示 healthy。
 2. 首页加载成功，无资源 404；服务状态为 container。
-3. `/healthz` 返回 ok，`/readyz` 返回 ready，`/api/v1/site` 返回 M0。
-4. 在卷的 content 目录写入临时测试文件，执行 `docker compose down` 和 `docker compose up -d` 后文件仍存在。
+3. `/healthz` 返回 ok，`/readyz` 返回 ready，`/api/v1/site` 返回 M2。
+4. 在绑定目录的 `content/` 下写入临时 Markdown 文件，执行 `docker compose down` 和 `docker compose up -d` 后文件仍存在。
 5. 查看日志无 permission denied；AMD64 和 ARM64 设备各自需要真实运行验证，工作流运行测试当前只覆盖 AMD64。
 
 更新测试镜像：
@@ -80,7 +84,7 @@ docker compose pull
 docker compose up -d
 ```
 
-更新前备份完整数据卷。生产环境如需固定版本，可将 Compose 中的 `image` 改为 Actions 提供的 SHA 标签或 digest；日常更新使用 `edge` 即可。
+更新前备份完整 `DOCS_DATA_DIR` 目录。生产环境如需固定版本，可将 Compose 中的 `DOCS_IMAGE` 改为 Actions 提供的 SHA 标签或 digest；日常更新使用 `edge` 即可。
 
 ## 5. 本机有 Docker 时
 

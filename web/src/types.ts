@@ -1,4 +1,5 @@
-export type TreeNode = { kind: 'category' | 'document'; path: string; title: string; collapsed?: boolean; children?: TreeNode[] };
+export type TreeNode = { kind: 'category' | 'document'; path: string; title: string; description?: string; collapsed?: boolean; children?: TreeNode[] };
+export type Category = { path: string; title: string; description?: string; order: number; collapsed: boolean };
 export type Heading = { id: string; text: string; level: number };
 export type Doc = { path: string; title: string; description?: string; html: string; headings?: Heading[] };
 export type SearchResult = { path: string; title: string; description?: string; snippet?: string };

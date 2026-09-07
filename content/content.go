@@ -50,11 +50,23 @@ type Document struct {
 }
 
 type Node struct {
-	Kind      string `json:"kind"`
-	Path      string `json:"path"`
-	Title     string `json:"title"`
-	Collapsed bool   `json:"collapsed,omitempty"`
-	Children  []Node `json:"children,omitempty"`
+	Kind        string `json:"kind"`
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Collapsed   bool   `json:"collapsed,omitempty"`
+	Children    []Node `json:"children,omitempty"`
+}
+
+// Category is the editable filesystem-backed metadata for a document folder.
+// The directory itself is the category identity; _category.yml only controls
+// its presentation in the tree and on the discovery page.
+type Category struct {
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Order       int    `json:"order"`
+	Collapsed   bool   `json:"collapsed"`
 }
 
 type Issue struct {
@@ -120,10 +132,11 @@ func (s *Store) Tree() ([]Node, error) {
 			if child == nil {
 				metadata := readCategoryMetadata(s.root, categoryPath)
 				child = &treeNode{node: Node{
-					Kind:      "category",
-					Path:      categoryPath,
-					Title:     firstNonEmpty(metadata.Title, titleFromFilename(part)),
-					Collapsed: metadata.Collapsed,
+					Kind:        "category",
+					Path:        categoryPath,
+					Title:       firstNonEmpty(metadata.Title, titleFromFilename(part)),
+					Description: metadata.Description,
+					Collapsed:   metadata.Collapsed,
 				}, order: metadata.Order}
 				current.children = append(current.children, child)
 			}
@@ -229,6 +242,91 @@ func (s *Store) AdminDocuments() ([]Document, error) {
 	return result, nil
 }
 
+// AdminCategories returns every non-hidden directory beneath the content
+// root. A directory is a category even when it currently has no Markdown
+// documents, which lets the admin UI prepare a taxonomy before writing notes.
+func (s *Store) AdminCategories() ([]Category, error) {
+	result := make([]Category, 0)
+	err := filepath.WalkDir(s.root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if path == s.root {
+			return nil
+		}
+		if strings.HasPrefix(entry.Name(), ".") {
+			return filepath.SkipDir
+		}
+		relative, err := filepath.Rel(s.root, path)
+		if err != nil {
+			return err
+		}
+		categoryPath := filepath.ToSlash(relative)
+		metadata := readCategoryMetadata(s.root, categoryPath)
+		result = append(result, Category{
+			Path:        categoryPath,
+			Title:       firstNonEmpty(metadata.Title, titleFromFilename(entry.Name())),
+			Description: metadata.Description,
+			Order:       metadata.Order,
+			Collapsed:   metadata.Collapsed,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Order != result[j].Order {
+			return result[i].Order < result[j].Order
+		}
+		return result[i].Path < result[j].Path
+	})
+	return result, nil
+}
+
+// UpsertCategory writes the presentation metadata for a category and creates
+// its directory when it does not exist yet. Markdown documents remain the
+// source of truth; this file only describes how the directory is presented.
+func (s *Store) UpsertCategory(category Category) error {
+	path, err := cleanCategoryPath(category.Path)
+	if err != nil {
+		return err
+	}
+	category.Title = strings.TrimSpace(category.Title)
+	category.Description = strings.TrimSpace(category.Description)
+	if category.Title == "" {
+		return ErrInvalidCategory
+	}
+	if len(category.Title) > 160 || len(category.Description) > 500 {
+		return ErrInvalidCategory
+	}
+	categoryPath, err := resolveCategoryPath(s.root, path)
+	if err != nil {
+		return err
+	}
+	metadata, err := yaml.Marshal(categoryMetadata{
+		Title:       category.Title,
+		Description: category.Description,
+		Order:       category.Order,
+		Collapsed:   category.Collapsed,
+	})
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := os.MkdirAll(categoryPath, 0o750); err != nil {
+		return err
+	}
+	if err := atomicWrite(filepath.Join(categoryPath, "_category.yml"), metadata); err != nil {
+		return err
+	}
+	return s.Refresh()
+}
+
 // ReadSource reads the Markdown source and returns its content hash. The hash
 // is the optimistic-lock version used by the admin API's If-Match header.
 func (s *Store) ReadSource(relativePath string) (string, string, error) {
@@ -256,6 +354,8 @@ var (
 	ErrVersionConflict    = errors.New("document version conflict")
 	ErrInvalidDocument    = errors.New("document content is invalid")
 	ErrUnsafeDocumentPath = errors.New("document path is unsafe")
+	ErrInvalidCategory    = errors.New("category metadata is invalid")
+	ErrUnsafeCategoryPath = errors.New("category path is unsafe")
 )
 
 // CreateSource validates and atomically creates a Markdown document.
@@ -463,9 +563,10 @@ type frontMatter struct {
 }
 
 type categoryMetadata struct {
-	Title     string `yaml:"title"`
-	Order     int    `yaml:"order"`
-	Collapsed bool   `yaml:"collapsed"`
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
+	Order       int    `yaml:"order"`
+	Collapsed   bool   `yaml:"collapsed"`
 }
 
 func readCategoryMetadata(root, categoryPath string) categoryMetadata {
@@ -478,6 +579,7 @@ func readCategoryMetadata(root, categoryPath string) categoryMetadata {
 		return categoryMetadata{}
 	}
 	metadata.Title = strings.TrimSpace(metadata.Title)
+	metadata.Description = strings.TrimSpace(metadata.Description)
 	return metadata
 }
 
@@ -804,4 +906,49 @@ func cleanDocumentPath(value string) (string, error) {
 		return "", errors.New("document path must reference markdown")
 	}
 	return clean, nil
+}
+
+func cleanCategoryPath(value string) (string, error) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" || strings.ContainsRune(value, 0) || strings.HasPrefix(value, "/") {
+		return "", ErrUnsafeCategoryPath
+	}
+	clean := pathpkg.Clean(value)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, ":") {
+		return "", ErrUnsafeCategoryPath
+	}
+	for _, part := range strings.Split(clean, "/") {
+		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".") {
+			return "", ErrUnsafeCategoryPath
+		}
+	}
+	return clean, nil
+}
+
+func resolveCategoryPath(root, relativePath string) (string, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	fullPath := filepath.Join(absoluteRoot, filepath.FromSlash(relativePath))
+	relative, err := filepath.Rel(absoluteRoot, fullPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", ErrUnsafeCategoryPath
+	}
+	current := absoluteRoot
+	parts := strings.Split(relative, string(filepath.Separator))
+	for _, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if errors.Is(statErr, os.ErrNotExist) {
+			break
+		}
+		if statErr != nil {
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", ErrUnsafeCategoryPath
+		}
+	}
+	return fullPath, nil
 }

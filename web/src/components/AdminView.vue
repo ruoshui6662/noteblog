@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import SiteHeader from "./SiteHeader.vue";
+import type { Category } from "../types";
 type AdminUser = {
   username: string;
   created_at: string;
@@ -33,10 +34,23 @@ const adminDocumentContent = ref("");
 const adminDocumentHash = ref("");
 const adminDocumentBusy = ref(false);
 const adminDocumentError = ref("");
+const adminCategories = ref<Category[]>([]);
+const adminCategoryPath = ref("");
+const adminCategoryTitle = ref("");
+const adminCategoryDescription = ref("");
+const adminCategoryOrder = ref(0);
+const adminCategoryCollapsed = ref(false);
+const adminCategoryBusy = ref(false);
+const adminCategoryError = ref("");
+const adminCategoryIsNew = ref(true);
 
 
 const adminDirectoryOptions = computed(() => {
   const directories = new Set<string>([""]);
+  for (const category of adminCategories.value) {
+    const parts = category.path.split("/");
+    for (let index = 1; index <= parts.length; index += 1) directories.add(parts.slice(0, index).join("/"));
+  }
   for (const document of adminDocuments.value) {
     const parts = document.path.split("/");
     parts.pop();
@@ -70,7 +84,7 @@ async function loadAdmin() {
       const payload = (await response.json()) as { user: AdminUser };
       adminUser.value = payload.user;
       adminMode.value = "authenticated";
-      await loadAdminDocuments();
+      await Promise.all([loadAdminDocuments(), loadAdminCategories()]);
       return;
     }
     adminMode.value = "setup";
@@ -117,7 +131,7 @@ async function submitAdminAuth(mode: "setup" | "login") {
       adminUser.value = payload.user;
       adminMode.value = "authenticated";
       adminPassword.value = "";
-      await loadAdminDocuments();
+      await Promise.all([loadAdminDocuments(), loadAdminCategories()]);
     }
   } catch {
     adminError.value = "无法连接认证服务，请确认容器已经更新到最新镜像。";
@@ -139,6 +153,73 @@ async function loadAdminDocuments(preferredPath = "") {
   const nextPath = preferredPath || adminSelectedPath.value || adminDocuments.value[0]?.path || "";
   if (nextPath) await selectAdminDocument(nextPath);
   else startNewAdminDocument();
+}
+
+async function loadAdminCategories(preferredPath = "") {
+  adminCategoryError.value = "";
+  const response = await fetch("/api/v1/admin/categories");
+  if (response.status === 401) {
+    adminMode.value = "login";
+    adminUser.value = null;
+    return;
+  }
+  if (!response.ok) throw new Error("无法读取目录列表");
+  adminCategories.value = (await response.json()) as Category[];
+  const nextPath = preferredPath || adminCategoryPath.value || adminCategories.value[0]?.path || "";
+  if (nextPath) selectAdminCategory(nextPath);
+  else startNewAdminCategory();
+}
+
+function selectAdminCategory(path: string) {
+  const category = adminCategories.value.find(item => item.path === path);
+  if (!category) return;
+  adminCategoryPath.value = category.path;
+  adminCategoryIsNew.value = false;
+  adminCategoryTitle.value = category.title;
+  adminCategoryDescription.value = category.description ?? "";
+  adminCategoryOrder.value = category.order;
+  adminCategoryCollapsed.value = category.collapsed;
+  adminCategoryError.value = "";
+}
+
+function startNewAdminCategory() {
+  adminCategoryPath.value = "";
+  adminCategoryIsNew.value = true;
+  adminCategoryTitle.value = "新目录";
+  adminCategoryDescription.value = "";
+  adminCategoryOrder.value = adminCategories.value.length + 1;
+  adminCategoryCollapsed.value = false;
+  adminCategoryError.value = "";
+}
+
+async function saveAdminCategory() {
+  const path = adminCategoryPath.value.trim().replace(/^\/+|\/+$/g, "");
+  const title = adminCategoryTitle.value.trim();
+  if (!path || !title) {
+    adminCategoryError.value = "请输入目录路径和显示名称。";
+    return;
+  }
+  adminCategoryBusy.value = true;
+  adminCategoryError.value = "";
+  try {
+    const response = await fetch("/api/v1/admin/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, title, description: adminCategoryDescription.value.trim(), order: Number(adminCategoryOrder.value) || 0, collapsed: adminCategoryCollapsed.value }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+    if (!response.ok) {
+      adminCategoryError.value = payload.error?.message ?? "目录保存失败。";
+      return;
+    }
+    adminMessage.value = "目录设置已保存，文件夹和 _category.yml 已写入数据目录。";
+    await loadAdminCategories(path);
+    await loadAdminDocuments();
+  } catch {
+    adminCategoryError.value = "无法连接文档服务。";
+  } finally {
+    adminCategoryBusy.value = false;
+  }
 }
 
 async function selectAdminDocument(path: string) {
@@ -310,6 +391,41 @@ onMounted(() => void loadAdmin());
           <button class="admin-link-button" type="button" :disabled="adminBusy" @click="adminLogout">退出登录</button>
         </div>
         <p v-if="adminMessage" class="admin-feedback" role="status">{{ adminMessage }}</p>
+        <section class="admin-category-panel" aria-labelledby="category-settings-title">
+          <div class="admin-category-panel__header">
+            <div>
+              <p class="admin-eyebrow">文件系统分类</p>
+              <h2 id="category-settings-title">目录结构</h2>
+              <p class="admin-field-help">每个目录对应数据目录中的一个文件夹；保存后会生成或更新该目录下的 <code>_category.yml</code>。</p>
+            </div>
+            <button class="admin-link-button" type="button" :disabled="adminCategoryBusy" @click="startNewAdminCategory">＋ 新建目录</button>
+          </div>
+          <div class="admin-category-editor">
+            <aside class="admin-category-list" aria-label="分类列表">
+              <button v-for="category in adminCategories" :key="category.path" type="button" class="admin-category-item" :class="{ 'admin-category-item--active': adminCategoryPath === category.path }" @click="selectAdminCategory(category.path)">
+                <strong>{{ category.title }}</strong>
+                <span>{{ category.path }}</span>
+              </button>
+              <p v-if="!adminCategories.length" class="sidebar__empty">还没有分类</p>
+            </aside>
+            <form class="admin-category-form" @submit.prevent="saveAdminCategory">
+              <label for="admin-category-path">目录路径</label>
+              <input id="admin-category-path" v-model="adminCategoryPath" placeholder="例如：getting-started" :disabled="adminCategoryBusy || !adminCategoryIsNew">
+              <p class="admin-field-help">使用相对 <code>content/</code> 的路径，可用多级目录，例如 <code>operations/docker</code>。</p>
+              <label for="admin-category-title">显示名称</label>
+              <input id="admin-category-title" v-model="adminCategoryTitle" required placeholder="例如：快速开始" :disabled="adminCategoryBusy">
+              <label for="admin-category-description">目录说明</label>
+              <textarea id="admin-category-description" v-model="adminCategoryDescription" rows="2" placeholder="首页分类卡片下显示的说明" :disabled="adminCategoryBusy"></textarea>
+              <div class="admin-category-options">
+                <label for="admin-category-order">排序</label>
+                <input id="admin-category-order" v-model.number="adminCategoryOrder" type="number" min="0" step="1" :disabled="adminCategoryBusy">
+                <label class="admin-checkbox"><input v-model="adminCategoryCollapsed" type="checkbox" :disabled="adminCategoryBusy"> 阅读页默认折叠</label>
+              </div>
+              <p v-if="adminCategoryError" class="admin-feedback admin-feedback--error" role="alert">{{ adminCategoryError }}</p>
+              <button class="admin-button" type="submit" :disabled="adminCategoryBusy">{{ adminCategoryBusy ? '保存中…' : '保存目录设置' }}</button>
+            </form>
+          </div>
+        </section>
         <div class="admin-editor">
           <aside class="admin-document-list" aria-label="文档列表">
             <button class="admin-new-button" type="button" :disabled="adminDocumentBusy" @click="startNewAdminDocument">＋ 新建文档</button>

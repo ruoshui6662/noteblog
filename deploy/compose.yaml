@@ -1,6 +1,6 @@
 services:
   docs:
-    image: ghcr.io/ruoshui6662/noteblog:edge
+    image: ${DOCS_IMAGE:-ghcr.io/ruoshui6662/noteblog:edge}
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -9,7 +9,7 @@ services:
       APP_DATA_DIR: /data
       APP_ENV: container
     volumes:
-      - docs-data:/data
+      - ${DOCS_DATA_DIR:-./data}:/data
     read_only: true
     cap_drop:
       - ALL
@@ -26,5 +26,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-volumes:
-  docs-data:

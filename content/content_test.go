@@ -154,6 +154,32 @@ func TestAdminDocumentsIncludesDraftsAndSourcePaths(t *testing.T) {
 	}
 }
 
+func TestAdminCategoriesWriteFilesystemMetadata(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(filepath.Join(root, "content"))
+	if err := store.UpsertCategory(Category{Path: "getting-started", Title: "快速开始", Description: "从这里开始", Order: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateSource("getting-started/intro.md", []byte("# 介绍\n")); err != nil {
+		t.Fatal(err)
+	}
+	categories, err := store.AdminCategories()
+	if err != nil || len(categories) != 1 {
+		t.Fatalf("AdminCategories() = %#v, %v", categories, err)
+	}
+	if categories[0].Title != "快速开始" || categories[0].Description != "从这里开始" || categories[0].Order != 10 {
+		t.Fatalf("category = %#v", categories[0])
+	}
+	metadata, err := os.ReadFile(filepath.Join(root, "content", "getting-started", "_category.yml"))
+	if err != nil || !strings.Contains(string(metadata), "title: 快速开始") {
+		t.Fatalf("category metadata = %q, %v", metadata, err)
+	}
+	tree, err := store.Tree()
+	if err != nil || len(tree) != 1 || tree[0].Description != "从这里开始" {
+		t.Fatalf("tree = %#v, %v", tree, err)
+	}
+}
+
 func TestMalformedDocumentIsExcludedAndReported(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "broken.md", "---\ntitle: missing close\n# body\n")

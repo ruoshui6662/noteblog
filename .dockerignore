@@ -1,7 +1,5 @@
 *
 !Dockerfile
-!docker/
-!docker/**
 !go.mod
 !go.sum
 !cmd/

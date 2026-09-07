@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import SiteHeader from "./SiteHeader.vue";
+import AppIcon from "./AppIcon.vue";
 import type { Category } from "../types";
 type AdminUser = {
   username: string;
@@ -43,6 +44,46 @@ const adminCategoryCollapsed = ref(false);
 const adminCategoryBusy = ref(false);
 const adminCategoryError = ref("");
 const adminCategoryIsNew = ref(true);
+const adminActiveCategoryPath = ref("");
+const adminPanel = ref<"preview" | "properties">("preview");
+const adminExplorerQuery = ref("");
+const adminNewMenuOpen = ref(false);
+const adminCategoryMenuPath = ref("");
+const adminOpenPaths = ref<string[]>([]);
+const adminSavedFingerprint = ref("");
+
+const filteredAdminDocuments = computed(() => {
+  const query = adminExplorerQuery.value.trim().toLocaleLowerCase();
+  if (!query) return adminDocuments.value;
+  return adminDocuments.value.filter(document => `${document.title} ${document.path}`.toLocaleLowerCase().includes(query));
+});
+const adminRootDocuments = computed(() => filteredAdminDocuments.value.filter(document => !document.path.includes("/")));
+const adminDocumentDirty = computed(() => adminSavedFingerprint.value !== adminDocumentFingerprint.value);
+const adminPreviewHTML = computed(() => adminRenderPreview(adminDocumentTitle.value, adminDocumentContent.value));
+
+const adminDocumentFingerprint = computed(() => JSON.stringify({
+  path: adminSelectedPath.value,
+  title: adminDocumentTitle.value,
+  directory: adminDirectory.value,
+  metadata: adminDocumentFrontMatter.value,
+  content: adminDocumentContent.value,
+}));
+
+function adminCategoriesFromDocuments(documents: AdminDocumentSummary[]): Category[] {
+  const paths = new Set<string>();
+  for (const document of documents) {
+    const parts = document.path.split("/");
+    parts.pop();
+    for (let index = 1; index <= parts.length; index += 1) paths.add(parts.slice(0, index).join("/"));
+  }
+  return [...paths].sort((left, right) => left.localeCompare(right, "zh-CN")).map((path, index) => ({
+    path,
+    title: path.split("/").at(-1)?.replace(/[-_]+/g, " ") || path,
+    description: "根据文档路径识别的目录",
+    order: index + 1,
+    collapsed: false,
+  }));
+}
 
 
 const adminDirectoryOptions = computed(() => {
@@ -74,6 +115,77 @@ const adminGeneratedPath = computed(() => {
   return candidate;
 });
 
+function adminDocumentsInCategory(path: string) {
+  return filteredAdminDocuments.value.filter(document => adminDirectoryFromPath(document.path) === path);
+}
+
+function adminOpenDocument(path: string) {
+  adminNewMenuOpen.value = false;
+  adminCategoryMenuPath.value = "";
+  if (!adminOpenPaths.value.includes(path)) adminOpenPaths.value = [...adminOpenPaths.value, path];
+  void selectAdminDocument(path);
+}
+
+function closeAdminDocument(path: string) {
+  if (path === adminSelectedPath.value && adminDocumentDirty.value && !window.confirm("这篇文档还有未保存修改，确定关闭吗？")) return;
+  adminOpenPaths.value = adminOpenPaths.value.filter(item => item !== path);
+  if (path !== adminSelectedPath.value) return;
+  const fallback = adminOpenPaths.value.at(-1);
+  if (fallback) void selectAdminDocument(fallback);
+  else startNewAdminDocument();
+}
+
+function openNewDocument(directory = adminDirectory.value) {
+  adminNewMenuOpen.value = false;
+  adminCategoryMenuPath.value = "";
+  startNewAdminDocument();
+  adminDirectory.value = directory;
+}
+
+function openCategorySettings(path: string) {
+  adminCategoryMenuPath.value = "";
+  adminPanel.value = "properties";
+  selectAdminCategory(path);
+}
+
+function adminEscape(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
+function adminRenderPreview(title: string, source: string) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const output = [`<h1>${adminEscape(title || "未命名文档")}</h1>`];
+  let paragraph: string[] = [];
+  let listOpen = false;
+  let codeOpen = false;
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      output.push(`<p>${paragraph.join(" ")}</p>`);
+      paragraph = [];
+    }
+  };
+  const closeList = () => {
+    if (listOpen) { output.push("</ul>"); listOpen = false; }
+  };
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      flushParagraph(); closeList();
+      if (!codeOpen) { output.push("<pre><code>"); codeOpen = true; } else { output.push("</code></pre>"); codeOpen = false; }
+      return;
+    }
+    if (codeOpen) { output.push(`${adminEscape(line)}\n`); return; }
+    if (!trimmed) { flushParagraph(); closeList(); return; }
+    const heading = trimmed.match(/^(#{2,6})\s+(.+)$/);
+    if (heading) { flushParagraph(); closeList(); const level = heading[1].length; output.push(`<h${level}>${adminEscape(heading[2])}</h${level}>`); return; }
+    const item = trimmed.match(/^[-*+]\s+(.+)$/);
+    if (item) { flushParagraph(); if (!listOpen) { output.push("<ul>"); listOpen = true; } output.push(`<li>${adminEscape(item[1])}</li>`); return; }
+    closeList(); paragraph.push(adminEscape(trimmed));
+  });
+  flushParagraph(); closeList(); if (codeOpen) output.push("</code></pre>");
+  return output.join("");
+}
+
 
 async function loadAdmin() {
   adminMode.value = "checking";
@@ -84,7 +196,8 @@ async function loadAdmin() {
       const payload = (await response.json()) as { user: AdminUser };
       adminUser.value = payload.user;
       adminMode.value = "authenticated";
-      await Promise.all([loadAdminDocuments(), loadAdminCategories()]);
+      await loadAdminDocuments();
+      await loadAdminCategories();
       return;
     }
     adminMode.value = "setup";
@@ -131,7 +244,8 @@ async function submitAdminAuth(mode: "setup" | "login") {
       adminUser.value = payload.user;
       adminMode.value = "authenticated";
       adminPassword.value = "";
-      await Promise.all([loadAdminDocuments(), loadAdminCategories()]);
+      await loadAdminDocuments();
+      await loadAdminCategories();
     }
   } catch {
     adminError.value = "无法连接认证服务，请确认容器已经更新到最新镜像。";
@@ -151,7 +265,10 @@ async function loadAdminDocuments(preferredPath = "") {
   if (!response.ok) throw new Error("无法读取文档列表");
   adminDocuments.value = (await response.json()) as AdminDocumentSummary[];
   const nextPath = preferredPath || adminSelectedPath.value || adminDocuments.value[0]?.path || "";
-  if (nextPath) await selectAdminDocument(nextPath);
+  if (nextPath) {
+    if (!adminOpenPaths.value.includes(nextPath)) adminOpenPaths.value = [...adminOpenPaths.value, nextPath];
+    await selectAdminDocument(nextPath);
+  }
   else startNewAdminDocument();
 }
 
@@ -163,7 +280,16 @@ async function loadAdminCategories(preferredPath = "") {
     adminUser.value = null;
     return;
   }
-  if (!response.ok) throw new Error("无法读取目录列表");
+  if (!response.ok) {
+    if (response.status === 404) {
+      adminCategories.value = adminCategoriesFromDocuments(adminDocuments.value);
+      const fallbackPath = preferredPath || adminCategoryPath.value || adminCategories.value[0]?.path || "";
+      if (fallbackPath) selectAdminCategory(fallbackPath);
+      else startNewAdminCategory();
+      return;
+    }
+    throw new Error("无法读取目录列表");
+  }
   adminCategories.value = (await response.json()) as Category[];
   const nextPath = preferredPath || adminCategoryPath.value || adminCategories.value[0]?.path || "";
   if (nextPath) selectAdminCategory(nextPath);
@@ -173,6 +299,8 @@ async function loadAdminCategories(preferredPath = "") {
 function selectAdminCategory(path: string) {
   const category = adminCategories.value.find(item => item.path === path);
   if (!category) return;
+  adminPanel.value = "properties";
+  adminActiveCategoryPath.value = path;
   adminCategoryPath.value = category.path;
   adminCategoryIsNew.value = false;
   adminCategoryTitle.value = category.title;
@@ -183,6 +311,7 @@ function selectAdminCategory(path: string) {
 }
 
 function startNewAdminCategory() {
+  adminActiveCategoryPath.value = "";
   adminCategoryPath.value = "";
   adminCategoryIsNew.value = true;
   adminCategoryTitle.value = "新目录";
@@ -237,6 +366,10 @@ async function selectAdminDocument(path: string) {
     adminDocumentFrontMatter.value = contentParts.metadata;
     adminDocumentContent.value = contentParts.body;
     adminDocumentHash.value = payload.hash;
+    adminActiveCategoryPath.value = "";
+    adminCategoryIsNew.value = false;
+    adminSavedFingerprint.value = adminDocumentFingerprint.value;
+    adminPanel.value = "preview";
   } catch (error) {
     adminDocumentError.value = error instanceof Error ? error.message : "无法读取文档内容";
   } finally {
@@ -245,6 +378,8 @@ async function selectAdminDocument(path: string) {
 }
 
 function startNewAdminDocument() {
+  adminActiveCategoryPath.value = "";
+  adminCategoryIsNew.value = false;
   adminSelectedPath.value = "";
   adminEditingPath.value = "";
   adminDocumentTitle.value = "新文档";
@@ -253,6 +388,8 @@ function startNewAdminDocument() {
   adminDocumentContent.value = "开始写作。\n";
   adminDocumentHash.value = "";
   adminDocumentError.value = "";
+  adminSavedFingerprint.value = "";
+  adminPanel.value = "preview";
 }
 
 function adminDirectoryFromPath(path: string) {
@@ -377,90 +514,57 @@ onMounted(() => void loadAdmin());
 
 <template>
   <div class="admin-shell">
-    <SiteHeader :reader="false" />
-    <main class="admin-main">
+    <SiteHeader v-if="adminMode !== 'authenticated'" :reader="false" />
+    <main class="admin-main" :class="{ 'admin-main--workspace': adminMode === 'authenticated' }">
       <section v-if="adminMode === 'checking'" class="admin-card" aria-live="polite">
         <p class="loading-state">正在检查登录状态…</p>
       </section>
-      <section v-else-if="adminMode === 'authenticated'" class="admin-card admin-card--workspace">
-        <div class="admin-card__header">
-          <div>
-            <p class="admin-eyebrow">管理员 · {{ adminUser?.username }}</p>
-            <h1>管理文档</h1>
+      <section v-else-if="adminMode === 'authenticated'" class="admin-workspace" aria-label="文档管理工作区">
+        <header class="admin-workspace__topbar">
+          <div class="admin-workspace__brand"><a href="/" aria-label="返回文档首页">RUOSHUI 知识库</a><span class="admin-workspace__crumb">管理端</span></div>
+          <label class="admin-command-search"><AppIcon name="search" /><span class="sr-only">搜索文档或命令</span><input v-model="adminExplorerQuery" type="search" placeholder="搜索文档或输入命令…" /></label>
+          <div class="admin-workspace__actions">
+            <span class="admin-save-state" :class="{ 'admin-save-state--dirty': adminDocumentDirty }"><AppIcon :name="adminDocumentDirty ? 'file-text' : 'check'" />{{ adminDocumentDirty ? '未保存' : '已保存' }}</span>
+            <button class="admin-workspace__quiet" type="button" @click="adminPanel = 'preview'">预览</button>
+            <button class="admin-workspace__quiet" type="button" @click="adminPanel = 'properties'">属性</button>
+            <button class="admin-workspace__quiet" type="button" :disabled="adminBusy" @click="adminLogout">退出</button>
+            <button class="admin-workspace__primary" type="button" :disabled="adminDocumentBusy || !adminDocumentTitle.trim()" @click="saveAdminDocument">{{ adminDocumentBusy ? '保存中…' : '保存更改' }}</button>
           </div>
-          <button class="admin-link-button" type="button" :disabled="adminBusy" @click="adminLogout">退出登录</button>
-        </div>
-        <p v-if="adminMessage" class="admin-feedback" role="status">{{ adminMessage }}</p>
-        <section class="admin-category-panel" aria-labelledby="category-settings-title">
-          <div class="admin-category-panel__header">
-            <div>
-              <p class="admin-eyebrow">文件系统分类</p>
-              <h2 id="category-settings-title">目录结构</h2>
-              <p class="admin-field-help">每个目录对应数据目录中的一个文件夹；保存后会生成或更新该目录下的 <code>_category.yml</code>。</p>
-            </div>
-            <button class="admin-link-button" type="button" :disabled="adminCategoryBusy" @click="startNewAdminCategory">＋ 新建目录</button>
-          </div>
-          <div class="admin-category-editor">
-            <aside class="admin-category-list" aria-label="分类列表">
-              <button v-for="category in adminCategories" :key="category.path" type="button" class="admin-category-item" :class="{ 'admin-category-item--active': adminCategoryPath === category.path }" @click="selectAdminCategory(category.path)">
-                <strong>{{ category.title }}</strong>
-                <span>{{ category.path }}</span>
-              </button>
-              <p v-if="!adminCategories.length" class="sidebar__empty">还没有分类</p>
-            </aside>
-            <form class="admin-category-form" @submit.prevent="saveAdminCategory">
-              <label for="admin-category-path">目录路径</label>
-              <input id="admin-category-path" v-model="adminCategoryPath" placeholder="例如：getting-started" :disabled="adminCategoryBusy || !adminCategoryIsNew">
-              <p class="admin-field-help">使用相对 <code>content/</code> 的路径，可用多级目录，例如 <code>operations/docker</code>。</p>
-              <label for="admin-category-title">显示名称</label>
-              <input id="admin-category-title" v-model="adminCategoryTitle" required placeholder="例如：快速开始" :disabled="adminCategoryBusy">
-              <label for="admin-category-description">目录说明</label>
-              <textarea id="admin-category-description" v-model="adminCategoryDescription" rows="2" placeholder="首页分类卡片下显示的说明" :disabled="adminCategoryBusy"></textarea>
-              <div class="admin-category-options">
-                <label for="admin-category-order">排序</label>
-                <input id="admin-category-order" v-model.number="adminCategoryOrder" type="number" min="0" step="1" :disabled="adminCategoryBusy">
-                <label class="admin-checkbox"><input v-model="adminCategoryCollapsed" type="checkbox" :disabled="adminCategoryBusy"> 阅读页默认折叠</label>
+        </header>
+        <p v-if="adminMessage" class="admin-workspace__message" role="status">{{ adminMessage }}</p>
+        <div class="admin-workspace__body">
+          <aside class="admin-explorer" aria-label="文件浏览器">
+            <div class="admin-explorer__header"><strong>文档库</strong><button class="admin-explorer__icon" type="button" aria-label="新建菜单" @click="adminNewMenuOpen = !adminNewMenuOpen">新建</button></div>
+            <div v-if="adminNewMenuOpen" class="admin-explorer__menu"><button type="button" @click="openNewDocument()">新建文档</button><button type="button" @click="startNewAdminCategory(); adminNewMenuOpen = false">新建目录</button></div>
+            <div class="admin-explorer__quick"><button type="button" class="is-active">全部文档 <span>{{ adminDocuments.length }}</span></button><button type="button">最近编辑</button></div>
+            <div class="admin-explorer__section"><div class="admin-explorer__section-title"><span>目录</span><button type="button" aria-label="新建目录" @click="startNewAdminCategory">＋</button></div>
+              <div v-for="category in adminCategories" :key="category.path" class="admin-explorer__category">
+                <div class="admin-explorer__category-row" :class="{ 'is-active': adminActiveCategoryPath === category.path }"><button type="button" class="admin-explorer__category-name" @click="selectAdminCategory(category.path)"><AppIcon name="chevron-down" />{{ category.title }}</button><button type="button" class="admin-explorer__more" aria-label="目录操作" @click.stop="adminCategoryMenuPath = adminCategoryMenuPath === category.path ? '' : category.path">…</button></div>
+                <div v-if="adminCategoryMenuPath === category.path" class="admin-explorer__context"><button type="button" @click="openCategorySettings(category.path)">目录设置</button><button type="button" @click="openNewDocument(category.path)">在此新建文档</button></div>
+                <button v-for="document in adminDocumentsInCategory(category.path)" :key="document.path" type="button" class="admin-explorer__document" :class="{ 'is-active': adminSelectedPath === document.path }" @click="adminOpenDocument(document.path)"><AppIcon name="file-text" /><span>{{ document.title }}</span><small v-if="document.draft">草稿</small></button>
               </div>
-              <p v-if="adminCategoryError" class="admin-feedback admin-feedback--error" role="alert">{{ adminCategoryError }}</p>
-              <button class="admin-button" type="submit" :disabled="adminCategoryBusy">{{ adminCategoryBusy ? '保存中…' : '保存目录设置' }}</button>
-            </form>
-          </div>
-        </section>
-        <div class="admin-editor">
-          <aside class="admin-document-list" aria-label="文档列表">
-            <button class="admin-new-button" type="button" :disabled="adminDocumentBusy" @click="startNewAdminDocument">＋ 新建文档</button>
-            <button
-              v-for="document in adminDocuments"
-              :key="document.path"
-              type="button"
-              class="admin-document-item"
-              :class="{ 'admin-document-item--active': adminSelectedPath === document.path }"
-              @click="selectAdminDocument(document.path)"
-            >
-              <strong>{{ document.title }}</strong>
-              <span>{{ document.path }}<template v-if="document.draft"> · 草稿</template></span>
-            </button>
-            <p v-if="!adminDocuments.length" class="sidebar__empty">暂无文档</p>
-          </aside>
-          <form class="admin-editor-form" @submit.prevent="saveAdminDocument">
-            <label for="admin-document-title">页面标题</label>
-            <input id="admin-document-title" v-model="adminDocumentTitle" required placeholder="例如：部署指南" :disabled="adminDocumentBusy">
-            <p class="admin-field-help">阅读页面显示的标题，保存时会写入 Markdown 的 <code>title</code> 元数据。</p>
-            <label for="admin-document-directory">所属目录</label>
-            <select id="admin-document-directory" v-model="adminDirectory" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy">
-              <option v-for="directory in adminDirectoryOptions" :key="directory" :value="directory">{{ directory || '文档根目录' }}</option>
-            </select>
-            <p class="admin-field-help">新文档会根据标题自动生成文件名；已存在文档保持原有位置和访问地址。</p>
-            <p class="admin-path-preview"><span>系统文件标识</span><code>{{ adminGeneratedPath }}</code></p>
-            <label for="admin-document-content">Markdown 内容</label>
-            <textarea id="admin-document-content" v-model="adminDocumentContent" rows="20" spellcheck="false" :disabled="adminDocumentBusy"></textarea>
-            <p class="admin-field-help">这里只编辑正文；标题和其他元数据会在保存时保留并自动同步。</p>
-            <p v-if="adminDocumentError" class="admin-feedback admin-feedback--error" role="alert">{{ adminDocumentError }}</p>
-            <div class="admin-editor-actions">
-              <button class="admin-button" type="submit" :disabled="adminDocumentBusy">{{ adminDocumentBusy ? '处理中…' : '保存文档' }}</button>
-              <button v-if="adminSelectedPath" class="admin-danger-button" type="button" :disabled="adminDocumentBusy" @click="deleteAdminDocument">删除</button>
+              <div v-if="adminRootDocuments.length" class="admin-explorer__category"><span class="admin-explorer__category-name admin-explorer__category-name--root">根目录</span><button v-for="document in adminRootDocuments" :key="document.path" type="button" class="admin-explorer__document" :class="{ 'is-active': adminSelectedPath === document.path }" @click="adminOpenDocument(document.path)"><AppIcon name="file-text" /><span>{{ document.title }}</span><small v-if="document.draft">草稿</small></button></div>
+              <p v-if="!adminCategories.length && !adminRootDocuments.length" class="admin-explorer__empty">暂无文档或目录</p>
             </div>
-          </form>
+            <div class="admin-explorer__footer"><button type="button" @click="adminPanel = 'properties'">设置</button></div>
+          </aside>
+          <main class="admin-editor-pane">
+            <div class="admin-tabs" role="tablist" aria-label="打开的文档"><button v-for="path in adminOpenPaths" :key="path" type="button" role="tab" :aria-selected="adminSelectedPath === path" :class="{ 'is-active': adminSelectedPath === path }" @click="adminOpenDocument(path)">{{ adminDocuments.find(item => item.path === path)?.title || path }}<span role="button" tabindex="0" aria-label="关闭标签" @click.stop="closeAdminDocument(path)"><AppIcon name="x" /></span></button><button type="button" class="admin-tabs__new" @click="openNewDocument()">新标签</button></div>
+            <div class="admin-editor-pane__path"><span>{{ adminDirectory || '文档根目录' }}</span><span aria-hidden="true">/</span><strong>{{ adminSelectedPath || adminGeneratedPath }}</strong></div>
+            <form class="admin-editor-form admin-editor-form--workspace" @submit.prevent="saveAdminDocument">
+              <input id="admin-document-title" v-model="adminDocumentTitle" class="admin-editor-title" required placeholder="未命名文档" :disabled="adminDocumentBusy" aria-label="文档标题">
+              <div class="admin-editor-toolbar"><span>Markdown</span><span>支持标题、列表、代码块和链接</span></div>
+              <textarea id="admin-document-content" v-model="adminDocumentContent" class="admin-editor-textarea" spellcheck="false" :disabled="adminDocumentBusy" aria-label="Markdown 内容"></textarea>
+              <p v-if="adminDocumentError" class="admin-feedback admin-feedback--error" role="alert">{{ adminDocumentError }}</p>
+              <div class="admin-editor-status"><span>{{ adminDocumentContent.length }} 字符</span><span>{{ adminDocumentDirty ? '修改尚未保存' : '所有修改已保存' }}</span><div><button class="admin-workspace__quiet" type="button" @click="adminPanel = 'preview'">打开预览</button><button class="admin-workspace__primary" type="submit" :disabled="adminDocumentBusy || !adminDocumentTitle.trim()">{{ adminDocumentBusy ? '保存中…' : '保存更改' }}</button></div></div>
+            </form>
+          </main>
+          <aside class="admin-inspector" aria-label="文档辅助面板">
+            <div class="admin-inspector__tabs"><button type="button" :class="{ 'is-active': adminPanel === 'preview' }" @click="adminPanel = 'preview'">预览</button><button type="button" :class="{ 'is-active': adminPanel === 'properties' }" @click="adminPanel = 'properties'">属性</button></div>
+            <div v-if="adminPanel === 'preview'" class="admin-preview"><div class="admin-preview__meta"><span>实时预览</span><span>{{ adminDocumentDirty ? '草稿' : '已保存' }}</span></div><article class="admin-preview__body" v-html="adminPreviewHTML"></article></div>
+            <div v-else-if="adminActiveCategoryPath || adminCategoryIsNew" class="admin-inspector__content"><p class="admin-eyebrow">目录设置</p><h2>{{ adminCategoryIsNew ? '新建目录' : adminCategoryTitle }}</h2><form class="admin-category-form admin-category-form--inspector" @submit.prevent="saveAdminCategory"><label for="admin-category-path">目录路径</label><input id="admin-category-path" v-model="adminCategoryPath" placeholder="例如：getting-started" :disabled="adminCategoryBusy || !adminCategoryIsNew"><label for="admin-category-title">显示名称</label><input id="admin-category-title" v-model="adminCategoryTitle" required placeholder="例如：快速开始" :disabled="adminCategoryBusy"><label for="admin-category-description">目录说明</label><textarea id="admin-category-description" v-model="adminCategoryDescription" rows="3" placeholder="在首页分类卡片中显示" :disabled="adminCategoryBusy"></textarea><div class="admin-category-options"><label for="admin-category-order">排序</label><input id="admin-category-order" v-model.number="adminCategoryOrder" type="number" min="0" step="1" :disabled="adminCategoryBusy"><label class="admin-checkbox"><input v-model="adminCategoryCollapsed" type="checkbox" :disabled="adminCategoryBusy"> 默认折叠</label></div><p v-if="adminCategoryError" class="admin-feedback admin-feedback--error" role="alert">{{ adminCategoryError }}</p><button class="admin-workspace__primary admin-workspace__primary--wide" type="submit" :disabled="adminCategoryBusy">{{ adminCategoryBusy ? '保存中…' : '保存目录设置' }}</button></form></div>
+            <div v-else class="admin-inspector__content"><p class="admin-eyebrow">文档属性</p><h2>{{ adminDocumentTitle || '未命名文档' }}</h2><label class="admin-property-label" for="admin-document-directory">所属目录</label><select id="admin-document-directory" v-model="adminDirectory" :disabled="Boolean(adminSelectedPath) || adminDocumentBusy"><option v-for="directory in adminDirectoryOptions" :key="directory" :value="directory">{{ directory || '文档根目录' }}</option></select><p class="admin-field-help">新文档会根据标题生成文件名；已存在文档保持原有路径。</p><label class="admin-property-label" for="admin-document-front-matter">文档元数据</label><textarea id="admin-document-front-matter" v-model="adminDocumentFrontMatter" rows="8" :disabled="adminDocumentBusy" placeholder="description: 文档说明&#10;tags: [指南]"></textarea><p class="admin-path-preview"><span>文件标识</span><code>{{ adminSelectedPath || adminGeneratedPath }}</code></p><button v-if="adminSelectedPath" class="admin-danger-button" type="button" :disabled="adminDocumentBusy" @click="deleteAdminDocument">删除文档</button></div>
+          </aside>
         </div>
       </section>
       <section v-else class="admin-card">

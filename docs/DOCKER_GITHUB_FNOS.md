@@ -55,6 +55,8 @@ environment:
 
 在飞牛 Docker 项目管理中导入该 Compose 即可。
 
+Compose 明确设置了 `entrypoint` 并清空 `command`，确保容器主进程运行 HTTP 服务。`healthcheck` 只由 Docker 在后台探测，不能把 `healthcheck` 填到项目的“启动命令”字段中。
+
 也可在该目录执行：
 
 ```sh
@@ -85,6 +87,15 @@ docker compose up -d
 ```
 
 更新前备份完整 `DOCS_DATA_DIR` 目录。生产环境如需固定版本，可将 Compose 中的 `DOCS_IMAGE` 改为 Actions 提供的 SHA 标签或 digest；日常更新使用 `edge` 即可。
+
+如果项目管理器显示 `Exited (0)`，先检查实际启动配置和日志：
+
+```sh
+docker inspect noteblog --format '{{json .Config.Entrypoint}} {{json .Config.Cmd}}'
+docker logs noteblog
+```
+
+正常结果应为 `Entrypoint=["/usr/local/bin/markdown-docs"]` 且 `Cmd=[]`；若 `Cmd` 中出现 `healthcheck`，删除项目中自定义的启动命令后重新创建容器。
 
 ## 5. 本机有 Docker 时
 

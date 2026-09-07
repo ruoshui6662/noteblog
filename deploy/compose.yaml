@@ -2,6 +2,9 @@ services:
   docs:
     image: ${DOCS_IMAGE:-ghcr.io/ruoshui6662/noteblog:edge}
     restart: unless-stopped
+    # Keep the long-running HTTP server as PID 1; healthcheck is not the command.
+    entrypoint: ["/usr/local/bin/markdown-docs"]
+    command: []
     ports:
       - "8080:8080"
     environment:

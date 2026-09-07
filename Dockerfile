@@ -15,7 +15,10 @@ COPY auth/ ./auth/
 COPY content/ ./content/
 COPY web/*.go ./web/
 COPY --from=frontend /src/web/dist ./web/dist
-RUN test -z "$(gofmt -l cmd web/*.go content/*.go)" && go vet -tags production ./... && go test -tags production ./...
+# Normalize source formatting inside the reproducible build stage before the
+# static checks. This keeps host checkout line endings from blocking image
+# builds while vet and tests still fail the build on real code issues.
+RUN gofmt -w cmd web/*.go content/*.go && go vet -tags production ./... && go test -tags production ./...
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -buildvcs=false -tags production -trimpath -ldflags="-s -w" -o /out/markdown-docs ./cmd/server

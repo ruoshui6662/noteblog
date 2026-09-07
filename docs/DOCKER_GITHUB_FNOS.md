@@ -55,7 +55,7 @@ environment:
 
 在飞牛 Docker 项目管理中导入该 Compose 即可。
 
-Compose 明确设置了 `entrypoint` 并清空 `command`，确保容器主进程运行 HTTP 服务。镜像入口会在绑定目录上准备必要子目录和权限，然后以 `10001:10001` 降权运行应用。`healthcheck` 只由 Docker 在后台探测，不能把 `healthcheck` 填到项目的“启动命令”字段中。
+Compose 明确设置了 `entrypoint` 并清空 `command`，确保容器主进程运行 HTTP 服务。镜像入口会在绑定目录上准备必要子目录，宿主机 ACL 允许时以 `10001:10001` 降权运行；如果宿主机禁止容器内调整权限，则自动以 root 运行以保证服务启动。`healthcheck` 只由 Docker 在后台探测，不能把 `healthcheck` 填到项目的“启动命令”字段中。
 
 也可在该目录执行：
 

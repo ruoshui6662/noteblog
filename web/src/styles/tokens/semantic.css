@@ -1,16 +1,18 @@
 :root {
-  --color-background: var(--white);
+  --color-background: var(--paper);
   --color-surface-subtle: var(--gray-50);
-  --color-surface-selected: var(--indigo-50);
-  --color-border: var(--gray-200);
+  --color-surface-selected: var(--mist);
+  --color-border: var(--line);
   --color-border-subtle: var(--gray-100);
-  --color-text-primary: var(--gray-900);
-  --color-text-secondary: var(--gray-600);
-  --color-text-muted: var(--gray-400);
-  --color-primary: var(--indigo-600);
-  --color-primary-hover: var(--indigo-700);
-  --color-primary-subtle: var(--indigo-50);
-  --color-focus-ring: var(--indigo-500);
-  --font-sans: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --color-text-primary: var(--ink);
+  --color-text-secondary: var(--ink-soft);
+  --color-text-muted: var(--ink-muted);
+  --color-primary: var(--ink);
+  --color-primary-hover: var(--teal-deep);
+  --color-primary-subtle: var(--mist);
+  --color-focus-ring: var(--teal);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-soft);
+  --font-sans: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "Cascadia Code", Consolas, monospace;
 }

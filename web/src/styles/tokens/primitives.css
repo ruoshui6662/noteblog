@@ -1,4 +1,16 @@
 :root {
+  --paper: #faf9f7;
+  --ink: #202321;
+  --ink-soft: #5e6460;
+  --ink-muted: #727671;
+  --line: #e2e3df;
+  --mist: #edf3ef;
+  --teal: #38766b;
+  --teal-deep: #25594f;
+  --danger: #a5362d;
+  --danger-soft: #fff0ee;
+  --scrim: rgb(25 34 30 / 24%);
+  --overlay-shadow: 0 24px 100px rgb(25 34 30 / 14%);
   --gray-50: #f9fafb;
   --gray-100: #f3f4f6;
   --gray-200: #e5e7eb;

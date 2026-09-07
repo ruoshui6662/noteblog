@@ -73,6 +73,10 @@ docker compose logs --tail=100
 
 ## 4. 验收与升级
 
+### 部署故障优先排查
+
+如果容器反复重启并出现 `/data/content: permission denied`，优先按 [Docker/飞牛开发经验记录](DEVELOPMENT_EXPERIENCE.md) 中的顺序验证宿主机绑定目录、UID/GID 和实际容器配置。一次性 UID `10001` 写入测试通过后再重建业务容器，可以快速区分宿主机权限问题和应用本身的问题。
+
 1. `docker compose ps` 显示 healthy。
 2. 首页加载成功，无资源 404；服务状态为 container。
 3. `/healthz` 返回 ok，`/readyz` 返回 ready，`/api/v1/site` 返回 M2。

@@ -300,3 +300,26 @@ dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
   .admin-editor-status > div { width: 100%; margin-left: 0; }
   .admin-editor-status > div .admin-workspace__primary { flex: 1; }
 }
+
+/* Final workspace pass: keep the editor as the primary surface and make the
+   inspector readable when the three panels share a desktop viewport. */
+@media (min-width: 901px) {
+  .admin-workspace { width: min(100%, 1480px); margin: 0 auto; border-inline: 1px solid var(--line); }
+  .admin-workspace__topbar { grid-template-columns: 260px minmax(280px, 1fr) auto; padding-inline: 22px; }
+  .admin-workspace__body { grid-template-columns: 260px minmax(0, 1fr) 340px; }
+  .admin-explorer { padding-inline: 12px; }
+  .admin-editor-pane__path { max-width: 920px; padding: 22px 48px 0; }
+  .admin-editor-form--workspace { min-height: calc(100dvh - 108px); max-width: 920px; padding: 8px 48px 28px; }
+  .admin-editor-title { padding: 10px 0 14px; font-size: clamp(30px, 3vw, 42px); line-height: 1.2; }
+  .admin-editor-textarea { min-height: 360px; padding: 26px 0; font-size: 14px; line-height: 1.85; }
+  .admin-inspector__content { padding-inline: 22px; }
+  .admin-category-options { display: grid; grid-template-columns: auto 90px minmax(0, 1fr); align-items: center; gap: 10px 14px; }
+  .admin-category-options input[type="number"] { width: 90px; }
+  .admin-category-options .admin-checkbox { min-width: 0; }
+}
+@media (min-width: 901px) and (max-width: 1180px) {
+  .admin-workspace__topbar { grid-template-columns: 220px minmax(220px, 1fr) auto; gap: 14px; }
+  .admin-workspace__body { grid-template-columns: 230px minmax(0, 1fr) 300px; }
+  .admin-editor-pane__path, .admin-editor-form--workspace { padding-inline: 32px; }
+  .admin-inspector__content { padding-inline: 18px; }
+}

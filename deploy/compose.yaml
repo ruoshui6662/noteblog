@@ -12,7 +12,7 @@ services:
       APP_DATA_DIR: /data
       APP_ENV: container
     volumes:
-      - ${DOCS_DATA_DIR:-./data}:/data
+      - ${DOCS_DATA_DIR:-/vol1/1000/docker/noteblog}:/data
     read_only: true
     cap_drop:
       - ALL

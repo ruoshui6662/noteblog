@@ -45,12 +45,12 @@ docker login ghcr.io -u YOUR_NAME
 
 ## 3. 飞牛 Compose 安装
 
-将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 默认使用项目目录下的 `data/` 绑定目录，并将其映射到容器 `/data`；也可以通过 `DOCS_DATA_DIR` 指定 NAS 上的绝对路径。镜像地址和数据目录都支持环境变量覆盖：
+将 `deploy/compose.yaml` 放入飞牛上的项目目录。Compose 默认使用 `/vol1/1000/docker/noteblog` 绑定到容器 `/data`；也可以通过 `DOCS_DATA_DIR` 指定其他 NAS 绝对路径。镜像地址和数据目录都支持环境变量覆盖：
 
 ```yaml
 environment:
   DOCS_IMAGE: ghcr.io/ruoshui6662/noteblog:edge
-  DOCS_DATA_DIR: /vol1/1000/docker/noteblog-data
+  DOCS_DATA_DIR: /vol1/1000/docker/noteblog
 ```
 
 在飞牛 Docker 项目管理中导入该 Compose 即可。
@@ -69,7 +69,7 @@ docker compose logs --tail=100
 
 访问 `http://飞牛IP:8080`，应显示文档首页和“container”环境状态。
 
-绑定目录中的结构就是应用的真实数据结构：`data/content/` 保存 Markdown 文件和 `_category.yml`，`data/media/` 保存附件，`data/noteblog.db` 保存管理员认证数据。镜像以 UID/GID `10001:10001` 运行，根文件系统只读，只有 `/data` 可写。首次使用前，在飞牛上创建 `DOCS_DATA_DIR` 指定的目录，并给予 UID/GID `10001:10001` 写权限；只修改这个专用目录的归属，不要修改整个 NAS 共享目录。
+绑定目录中的结构就是应用的真实数据结构：`/vol1/1000/docker/noteblog/content/` 保存 Markdown 文件和 `_category.yml`，`/vol1/1000/docker/noteblog/media/` 保存附件，`/vol1/1000/docker/noteblog/noteblog.db` 保存管理员认证数据。镜像以 UID/GID `10001:10001` 运行，根文件系统只读，只有 `/data` 可写。首次使用前，在飞牛上创建该目录，并给予 UID/GID `10001:10001` 写权限；只修改这个专用目录的归属，不要修改整个 NAS 共享目录。
 
 ## 4. 验收与升级
 

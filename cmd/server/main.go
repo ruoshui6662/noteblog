@@ -225,9 +225,9 @@ func (s *server) authMe(w http.ResponseWriter, r *http.Request) {
 }
 
 type adminDocumentWriteRequest struct {
-	Path         string `json:"path"`
-	Content      string `json:"content"`
-	ExpectedHash string `json:"expected_hash"`
+	Path         string                  `json:"path"`
+	Content      string                  `json:"content"`
+	ExpectedHash string                  `json:"expected_hash"`
 	Metadata     *content.SourceMetadata `json:"metadata,omitempty"`
 }
 

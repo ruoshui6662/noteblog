@@ -134,7 +134,15 @@ async function navigate(path?: string, hash = '') {
 }
 async function showDirectory() {
   if (!home.value) await navigate();
-  await nextTick(); document.getElementById('directory')?.scrollIntoView({ behavior: 'smooth' });
+  await nextTick();
+  requestAnimationFrame(() => {
+    const directory = document.getElementById('directory');
+    if (!directory) return;
+    // Use the page scroll position explicitly so this also works in WebViews where
+    // scrollIntoView may target an unexpected ancestor. Leave room for the sticky header.
+    const top = Math.max(0, directory.getBoundingClientRect().top + window.scrollY - 96);
+    window.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  });
 }
 async function onArticleClick(event: MouseEvent) {
   const target = event.target as HTMLElement;

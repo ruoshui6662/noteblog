@@ -354,6 +354,9 @@ var (
 	ErrVersionConflict    = errors.New("document version conflict")
 	ErrInvalidDocument    = errors.New("document content is invalid")
 	ErrUnsafeDocumentPath = errors.New("document path is unsafe")
+	ErrCategoryExists     = errors.New("category already exists")
+	ErrCategoryNotFound   = errors.New("category not found")
+	ErrCategoryNotEmpty   = errors.New("category is not empty")
 	ErrInvalidCategory    = errors.New("category metadata is invalid")
 	ErrUnsafeCategoryPath = errors.New("category path is unsafe")
 )
@@ -397,6 +400,206 @@ func (s *Store) DeleteSource(relativePath, expectedHash string) error {
 	}
 	if expectedHash != hashBytes(data) {
 		return ErrVersionConflict
+	}
+	if err := os.Remove(fullPath); err != nil {
+		return err
+	}
+	return s.Refresh()
+}
+
+// MoveSource moves a Markdown source while checking its current content hash.
+// The source path is the identity used by the admin surface; a document's
+// optional front-matter slug does not change during this operation.
+func (s *Store) MoveSource(relativePath, targetPath, expectedHash string) (Document, error) {
+	source, err := cleanDocumentPath(relativePath)
+	if err != nil {
+		return Document{}, err
+	}
+	target, err := cleanDocumentPath(targetPath)
+	if err != nil {
+		return Document{}, err
+	}
+	if source == target {
+		return Document{}, ErrDocumentExists
+	}
+	if strings.TrimSpace(expectedHash) == "" {
+		return Document{}, ErrVersionConflict
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	sourceFull, err := resolveDocumentPath(s.root, source)
+	if err != nil {
+		return Document{}, err
+	}
+	targetFull, err := resolveDocumentPath(s.root, target)
+	if err != nil {
+		return Document{}, err
+	}
+	data, err := os.ReadFile(sourceFull)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Document{}, ErrDocumentNotFound
+		}
+		return Document{}, err
+	}
+	if hashBytes(data) != expectedHash {
+		return Document{}, ErrVersionConflict
+	}
+	if _, err := os.Lstat(targetFull); err == nil {
+		return Document{}, ErrDocumentExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Document{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(targetFull), 0o750); err != nil {
+		return Document{}, err
+	}
+	if err := os.Rename(sourceFull, targetFull); err != nil {
+		return Document{}, err
+	}
+	if err := s.Refresh(); err != nil {
+		return Document{}, err
+	}
+	document, err := parseDocument(target, data)
+	if err != nil {
+		return Document{}, fmt.Errorf("%w: %v", ErrInvalidDocument, err)
+	}
+	document.Path = target
+	return document, nil
+}
+
+// DuplicateSource copies a Markdown source to a new path after checking the
+// source hash. The copy is written atomically and receives its own hash.
+func (s *Store) DuplicateSource(relativePath, targetPath, expectedHash string) (Document, error) {
+	source, err := cleanDocumentPath(relativePath)
+	if err != nil {
+		return Document{}, err
+	}
+	target, err := cleanDocumentPath(targetPath)
+	if err != nil {
+		return Document{}, err
+	}
+	if source == target {
+		return Document{}, ErrDocumentExists
+	}
+	if strings.TrimSpace(expectedHash) == "" {
+		return Document{}, ErrVersionConflict
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	sourceFull, err := resolveDocumentPath(s.root, source)
+	if err != nil {
+		return Document{}, err
+	}
+	targetFull, err := resolveDocumentPath(s.root, target)
+	if err != nil {
+		return Document{}, err
+	}
+	data, err := os.ReadFile(sourceFull)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Document{}, ErrDocumentNotFound
+		}
+		return Document{}, err
+	}
+	if hashBytes(data) != expectedHash {
+		return Document{}, ErrVersionConflict
+	}
+	if _, err := os.Lstat(targetFull); err == nil {
+		return Document{}, ErrDocumentExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Document{}, err
+	}
+	if err := atomicWrite(targetFull, data); err != nil {
+		return Document{}, err
+	}
+	if err := s.Refresh(); err != nil {
+		return Document{}, err
+	}
+	document, err := parseDocument(target, data)
+	if err != nil {
+		return Document{}, fmt.Errorf("%w: %v", ErrInvalidDocument, err)
+	}
+	document.Path = target
+	return document, nil
+}
+
+// MoveCategory moves a directory and its metadata/documents as one filesystem
+// operation. Target paths must not already exist or be inside the source.
+func (s *Store) MoveCategory(relativePath, targetPath string) error {
+	source, err := cleanCategoryPath(relativePath)
+	if err != nil {
+		return err
+	}
+	target, err := cleanCategoryPath(targetPath)
+	if err != nil {
+		return err
+	}
+	if source == target || strings.HasPrefix(target, source+"/") {
+		return ErrUnsafeCategoryPath
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	sourceFull, err := resolveCategoryPath(s.root, source)
+	if err != nil {
+		return err
+	}
+	targetFull, err := resolveCategoryPath(s.root, target)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(sourceFull)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrCategoryNotFound
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return ErrUnsafeCategoryPath
+	}
+	if _, err := os.Lstat(targetFull); err == nil {
+		return ErrCategoryExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(targetFull), 0o750); err != nil {
+		return err
+	}
+	if err := os.Rename(sourceFull, targetFull); err != nil {
+		return err
+	}
+	return s.Refresh()
+}
+
+// DeleteCategory removes an empty category. Refuse recursive deletion so a
+// mistaken context-menu action cannot remove documents in bulk.
+func (s *Store) DeleteCategory(relativePath string) error {
+	path, err := cleanCategoryPath(relativePath)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	fullPath, err := resolveCategoryPath(s.root, path)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrCategoryNotFound
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != "_category.yml" {
+			return ErrCategoryNotEmpty
+		}
+	}
+	if len(entries) == 1 {
+		if err := os.Remove(filepath.Join(fullPath, "_category.yml")); err != nil {
+			return err
+		}
 	}
 	if err := os.Remove(fullPath); err != nil {
 		return err

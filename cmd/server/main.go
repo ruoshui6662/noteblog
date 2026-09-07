@@ -92,7 +92,11 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/admin/docs", s.adminDocuments)
 	mux.HandleFunc("GET /api/v1/admin/categories", s.adminCategories)
 	mux.HandleFunc("POST /api/v1/admin/docs", s.adminCreateDocument)
+	mux.HandleFunc("POST /api/v1/admin/docs/move", s.adminMoveDocument)
+	mux.HandleFunc("POST /api/v1/admin/docs/duplicate", s.adminDuplicateDocument)
 	mux.HandleFunc("POST /api/v1/admin/categories", s.adminUpsertCategory)
+	mux.HandleFunc("POST /api/v1/admin/categories/move", s.adminMoveCategory)
+	mux.HandleFunc("DELETE /api/v1/admin/categories/", s.adminDeleteCategory)
 	mux.HandleFunc("GET /api/v1/admin/docs/", s.adminDocument)
 	mux.HandleFunc("PUT /api/v1/admin/docs/", s.adminUpdateDocument)
 	mux.HandleFunc("DELETE /api/v1/admin/docs/", s.adminDeleteDocument)
@@ -242,6 +246,12 @@ type adminCategoryWriteRequest struct {
 	Collapsed   bool   `json:"collapsed"`
 }
 
+type adminStructureRequest struct {
+	SourcePath   string `json:"source_path"`
+	TargetPath   string `json:"target_path"`
+	ExpectedHash string `json:"expected_hash"`
+}
+
 func (s *server) requireAdmin(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 	if s.auth == nil {
 		writeError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "认证服务未初始化")
@@ -384,6 +394,67 @@ func (s *server) adminDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "path": path})
 }
 
+func (s *server) adminMoveDocument(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	var request adminStructureRequest
+	if err := decodeStructureRequest(w, r, &request); err != nil {
+		return
+	}
+	document, err := s.store.MoveSource(request.SourcePath, request.TargetPath, request.ExpectedHash)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	setDocumentETag(w, document.Hash)
+	writeJSON(w, http.StatusOK, document)
+}
+
+func (s *server) adminDuplicateDocument(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	var request adminStructureRequest
+	if err := decodeStructureRequest(w, r, &request); err != nil {
+		return
+	}
+	document, err := s.store.DuplicateSource(request.SourcePath, request.TargetPath, request.ExpectedHash)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	setDocumentETag(w, document.Hash)
+	writeJSON(w, http.StatusCreated, document)
+}
+
+func (s *server) adminMoveCategory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	var request adminStructureRequest
+	if err := decodeStructureRequest(w, r, &request); err != nil {
+		return
+	}
+	if err := s.store.MoveCategory(request.SourcePath, request.TargetPath); err != nil {
+		writeCategoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "moved", "source_path": request.SourcePath, "target_path": request.TargetPath})
+}
+
+func (s *server) adminDeleteCategory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/categories/")
+	if err := s.store.DeleteCategory(path); err != nil {
+		writeCategoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "path": path})
+}
+
 func decodeDocumentWrite(w http.ResponseWriter, r *http.Request, target *adminDocumentWriteRequest) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	decoder := json.NewDecoder(r.Body)
@@ -393,6 +464,20 @@ func decodeDocumentWrite(w http.ResponseWriter, r *http.Request, target *adminDo
 	}
 	if decoder.Decode(&struct{}{}) == nil {
 		writeError(w, http.StatusBadRequest, "INVALID_DOCUMENT_JSON", "文档请求格式无效")
+		return errors.New("request contains multiple JSON values")
+	}
+	return nil
+}
+
+func decodeStructureRequest(w http.ResponseWriter, r *http.Request, target *adminStructureRequest) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_STRUCTURE_JSON", "结构操作请求格式无效")
+		return err
+	}
+	if decoder.Decode(&struct{}{}) == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_STRUCTURE_JSON", "结构操作请求格式无效")
 		return errors.New("request contains multiple JSON values")
 	}
 	return nil
@@ -432,6 +517,12 @@ func writeDocumentError(w http.ResponseWriter, err error) {
 
 func writeCategoryError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, content.ErrCategoryNotFound):
+		writeError(w, http.StatusNotFound, "CATEGORY_NOT_FOUND", "目录不存在")
+	case errors.Is(err, content.ErrCategoryExists):
+		writeError(w, http.StatusConflict, "CATEGORY_EXISTS", "目标目录已经存在")
+	case errors.Is(err, content.ErrCategoryNotEmpty):
+		writeError(w, http.StatusConflict, "CATEGORY_NOT_EMPTY", "目录不为空，请先处理其中的文档")
 	case errors.Is(err, content.ErrInvalidCategory), errors.Is(err, content.ErrUnsafeCategoryPath):
 		writeError(w, http.StatusBadRequest, "INVALID_CATEGORY", "目录名称或配置无效")
 	default:

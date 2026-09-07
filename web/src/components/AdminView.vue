@@ -49,8 +49,11 @@ const adminPanel = ref<"preview" | "properties">("preview");
 const adminExplorerQuery = ref("");
 const adminNewMenuOpen = ref(false);
 const adminCategoryMenuPath = ref("");
+const adminDocumentMenuPath = ref("");
 const adminOpenPaths = ref<string[]>([]);
 const adminSavedFingerprint = ref("");
+const adminStructureBusy = ref(false);
+const adminStructureError = ref("");
 
 const filteredAdminDocuments = computed(() => {
   const query = adminExplorerQuery.value.trim().toLocaleLowerCase();
@@ -122,6 +125,7 @@ function adminDocumentsInCategory(path: string) {
 function adminOpenDocument(path: string) {
   adminNewMenuOpen.value = false;
   adminCategoryMenuPath.value = "";
+  adminDocumentMenuPath.value = "";
   if (!adminOpenPaths.value.includes(path)) adminOpenPaths.value = [...adminOpenPaths.value, path];
   void selectAdminDocument(path);
 }
@@ -135,9 +139,116 @@ function closeAdminDocument(path: string) {
   else startNewAdminDocument();
 }
 
+function adminDocumentTargetPath(path: string, value: string, suffix = "") {
+  const input = value.trim().replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (!input) return "";
+  const directory = adminDirectoryFromPath(path);
+  const name = input.includes("/") ? input : `${directory ? `${directory}/` : ""}${input}`;
+  if (/\.(md|markdown)$/i.test(name)) return name;
+  return `${name}${suffix || ".md"}`;
+}
+
+function adminReplaceOpenPath(sourcePath: string, targetPath: string) {
+  adminOpenPaths.value = adminOpenPaths.value.map(path => path === sourcePath ? targetPath : path);
+  if (adminSelectedPath.value === sourcePath) adminSelectedPath.value = targetPath;
+  if (adminEditingPath.value === sourcePath) adminEditingPath.value = targetPath;
+}
+
+function adminReplaceOpenPrefix(sourcePath: string, targetPath: string) {
+  const replace = (path: string) => path === sourcePath || path.startsWith(`${sourcePath}/`)
+    ? `${targetPath}${path.slice(sourcePath.length)}`
+    : path;
+  adminOpenPaths.value = adminOpenPaths.value.map(replace);
+  adminSelectedPath.value = replace(adminSelectedPath.value);
+  adminEditingPath.value = replace(adminEditingPath.value);
+}
+
+async function adminStructureCall(url: string, payload: Record<string, string>) {
+  adminStructureBusy.value = true;
+  adminStructureError.value = "";
+  try {
+    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const result = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+    if (!response.ok) throw new Error(result.error?.message ?? "结构操作失败，请刷新后重试。");
+    return result;
+  } catch (error) {
+    adminStructureError.value = error instanceof Error ? error.message : "结构操作失败，请刷新后重试。";
+    return null;
+  } finally {
+    adminStructureBusy.value = false;
+  }
+}
+
+async function moveAdminDocument(path: string) {
+  adminDocumentMenuPath.value = "";
+  const document = adminDocuments.value.find(item => item.path === path);
+  if (!document) return;
+  const input = window.prompt("移动到目标路径（可输入完整路径）", document.path);
+  if (!input || input.trim() === document.path) return;
+  const targetPath = adminDocumentTargetPath(path, input);
+  if (!targetPath) return;
+  const result = await adminStructureCall("/api/v1/admin/docs/move", { source_path: path, target_path: targetPath, expected_hash: document.hash });
+  if (!result) return;
+  adminReplaceOpenPath(path, targetPath);
+  adminMessage.value = "文档已移动。";
+  await loadAdminDocuments(targetPath);
+  await loadAdminCategories();
+}
+
+async function duplicateAdminDocument(path: string) {
+  adminDocumentMenuPath.value = "";
+  const document = adminDocuments.value.find(item => item.path === path);
+  if (!document) return;
+  const base = path.replace(/\.(md|markdown)$/i, "-copy.md");
+  const input = window.prompt("复制到目标路径", base);
+  if (!input) return;
+  const targetPath = adminDocumentTargetPath(path, input);
+  if (!targetPath) return;
+  const result = await adminStructureCall("/api/v1/admin/docs/duplicate", { source_path: path, target_path: targetPath, expected_hash: document.hash });
+  if (!result) return;
+  adminMessage.value = "文档副本已创建。";
+  await loadAdminDocuments(targetPath);
+  await loadAdminCategories();
+}
+
+async function moveAdminCategory(path: string) {
+  adminCategoryMenuPath.value = "";
+  const input = window.prompt("移动到目标目录路径", path);
+  if (!input || input.trim() === path) return;
+  const targetPath = input.trim().replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (!targetPath) return;
+  const result = await adminStructureCall("/api/v1/admin/categories/move", { source_path: path, target_path: targetPath });
+  if (!result) return;
+  adminReplaceOpenPrefix(path, targetPath);
+  adminMessage.value = "目录已移动。";
+  await loadAdminCategories(targetPath);
+  await loadAdminDocuments();
+}
+
+async function deleteAdminCategory(path: string) {
+  adminCategoryMenuPath.value = "";
+  if (!window.confirm(`确定删除目录「${path}」吗？目录必须为空。`)) return;
+  adminStructureBusy.value = true;
+  adminStructureError.value = "";
+  try {
+    const response = await fetch(`/api/v1/admin/categories/${path.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" });
+    const result = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+    if (!response.ok) throw new Error(result.error?.message ?? "目录删除失败，请刷新后重试。");
+    adminMessage.value = "目录已删除。";
+    adminActiveCategoryPath.value = "";
+    await loadAdminCategories();
+    await loadAdminDocuments();
+  } catch (error) {
+    adminStructureError.value = error instanceof Error ? error.message : "目录删除失败，请刷新后重试。";
+  } finally {
+    adminStructureBusy.value = false;
+  }
+}
+
 function openNewDocument(directory = adminDirectory.value) {
   adminNewMenuOpen.value = false;
   adminCategoryMenuPath.value = "";
+  adminDocumentMenuPath.value = "";
   startNewAdminDocument();
   adminDirectory.value = directory;
 }
@@ -300,6 +411,7 @@ function selectAdminCategory(path: string) {
   const category = adminCategories.value.find(item => item.path === path);
   if (!category) return;
   adminPanel.value = "properties";
+  adminDocumentMenuPath.value = "";
   adminActiveCategoryPath.value = path;
   adminCategoryPath.value = category.path;
   adminCategoryIsNew.value = false;
@@ -473,14 +585,15 @@ async function saveAdminDocument() {
   }
 }
 
-async function deleteAdminDocument() {
-  if (!adminSelectedPath.value || !window.confirm(`确定删除「${adminSelectedPath.value}」吗？`)) return;
+async function deleteAdminDocumentAt(path: string, expectedHash: string) {
+  adminDocumentMenuPath.value = "";
+  if (!path || !window.confirm(`确定删除「${path}」吗？`)) return;
   adminDocumentBusy.value = true;
   adminDocumentError.value = "";
   try {
-    const response = await fetch(`/api/v1/admin/docs/${adminSelectedPath.value.split("/").map(encodeURIComponent).join("/")}`, {
+    const response = await fetch(`/api/v1/admin/docs/${path.split("/").map(encodeURIComponent).join("/")}`, {
       method: "DELETE",
-      headers: { "If-Match": `"${adminDocumentHash.value}"` },
+      headers: { "If-Match": `"${expectedHash}"` },
     });
     const payload = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
     if (!response.ok) {
@@ -488,13 +601,22 @@ async function deleteAdminDocument() {
       return;
     }
     adminMessage.value = "文档已删除。";
-    adminSelectedPath.value = "";
-    await loadAdminDocuments();
+    adminOpenPaths.value = adminOpenPaths.value.filter(item => item !== path);
+    if (adminSelectedPath.value === path) {
+      adminSelectedPath.value = "";
+      await loadAdminDocuments();
+    } else {
+      await loadAdminDocuments(adminSelectedPath.value);
+    }
   } catch {
     adminDocumentError.value = "无法连接文档服务。";
   } finally {
     adminDocumentBusy.value = false;
   }
+}
+
+async function deleteAdminDocument() {
+  await deleteAdminDocumentAt(adminSelectedPath.value, adminDocumentHash.value);
 }
 
 async function adminLogout() {
@@ -532,6 +654,7 @@ onMounted(() => void loadAdmin());
           </div>
         </header>
         <p v-if="adminMessage" class="admin-workspace__message" role="status">{{ adminMessage }}</p>
+        <p v-if="adminStructureError" class="admin-workspace__message admin-workspace__message--error" role="alert">{{ adminStructureError }}</p>
         <div class="admin-workspace__body">
           <aside class="admin-explorer" aria-label="文件浏览器">
             <div class="admin-explorer__header"><strong>文档库</strong><button class="admin-explorer__icon" type="button" aria-label="新建菜单" @click="adminNewMenuOpen = !adminNewMenuOpen">新建</button></div>
@@ -539,11 +662,11 @@ onMounted(() => void loadAdmin());
             <div class="admin-explorer__quick"><button type="button" class="is-active">全部文档 <span>{{ adminDocuments.length }}</span></button><button type="button">最近编辑</button></div>
             <div class="admin-explorer__section"><div class="admin-explorer__section-title"><span>目录</span><button type="button" aria-label="新建目录" @click="startNewAdminCategory">＋</button></div>
               <div v-for="category in adminCategories" :key="category.path" class="admin-explorer__category">
-                <div class="admin-explorer__category-row" :class="{ 'is-active': adminActiveCategoryPath === category.path }"><button type="button" class="admin-explorer__category-name" @click="selectAdminCategory(category.path)"><AppIcon name="chevron-down" />{{ category.title }}</button><button type="button" class="admin-explorer__more" aria-label="目录操作" @click.stop="adminCategoryMenuPath = adminCategoryMenuPath === category.path ? '' : category.path">…</button></div>
-                <div v-if="adminCategoryMenuPath === category.path" class="admin-explorer__context"><button type="button" @click="openCategorySettings(category.path)">目录设置</button><button type="button" @click="openNewDocument(category.path)">在此新建文档</button></div>
-                <button v-for="document in adminDocumentsInCategory(category.path)" :key="document.path" type="button" class="admin-explorer__document" :class="{ 'is-active': adminSelectedPath === document.path }" @click="adminOpenDocument(document.path)"><AppIcon name="file-text" /><span>{{ document.title }}</span><small v-if="document.draft">草稿</small></button>
+                <div class="admin-explorer__category-row" :class="{ 'is-active': adminActiveCategoryPath === category.path }"><button type="button" class="admin-explorer__category-name" @click="selectAdminCategory(category.path)"><AppIcon name="chevron-down" />{{ category.title }}</button><button type="button" class="admin-explorer__more" aria-label="目录操作" @click.stop="adminCategoryMenuPath = adminCategoryMenuPath === category.path ? '' : category.path">更多</button></div>
+                <div v-if="adminCategoryMenuPath === category.path" class="admin-explorer__context"><button type="button" @click="openCategorySettings(category.path)">目录设置</button><button type="button" @click="openNewDocument(category.path)">在此新建文档</button><button type="button" @click="moveAdminCategory(category.path)">移动目录</button><button type="button" @click="deleteAdminCategory(category.path)">删除空目录</button></div>
+                <div v-for="document in adminDocumentsInCategory(category.path)" :key="document.path" class="admin-explorer__document-row"><button type="button" class="admin-explorer__document" :class="{ 'is-active': adminSelectedPath === document.path }" @click="adminOpenDocument(document.path)"><AppIcon name="file-text" /><span>{{ document.title }}</span><small v-if="document.draft">草稿</small></button><button type="button" class="admin-explorer__document-more" aria-label="文档操作" @click.stop="adminDocumentMenuPath = adminDocumentMenuPath === document.path ? '' : document.path">更多</button><div v-if="adminDocumentMenuPath === document.path" class="admin-explorer__context"><button type="button" @click="adminOpenDocument(document.path); adminDocumentMenuPath = ''">打开文档</button><button type="button" @click="moveAdminDocument(document.path)">移动文档</button><button type="button" @click="duplicateAdminDocument(document.path)">复制文档</button><button type="button" @click="deleteAdminDocumentAt(document.path, document.hash)">删除文档</button></div></div>
               </div>
-              <div v-if="adminRootDocuments.length" class="admin-explorer__category"><span class="admin-explorer__category-name admin-explorer__category-name--root">根目录</span><button v-for="document in adminRootDocuments" :key="document.path" type="button" class="admin-explorer__document" :class="{ 'is-active': adminSelectedPath === document.path }" @click="adminOpenDocument(document.path)"><AppIcon name="file-text" /><span>{{ document.title }}</span><small v-if="document.draft">草稿</small></button></div>
+              <div v-if="adminRootDocuments.length" class="admin-explorer__category"><span class="admin-explorer__category-name admin-explorer__category-name--root">根目录</span><div v-for="document in adminRootDocuments" :key="document.path" class="admin-explorer__document-row"><button type="button" class="admin-explorer__document" :class="{ 'is-active': adminSelectedPath === document.path }" @click="adminOpenDocument(document.path)"><AppIcon name="file-text" /><span>{{ document.title }}</span><small v-if="document.draft">草稿</small></button><button type="button" class="admin-explorer__document-more" aria-label="文档操作" @click.stop="adminDocumentMenuPath = adminDocumentMenuPath === document.path ? '' : document.path">更多</button><div v-if="adminDocumentMenuPath === document.path" class="admin-explorer__context"><button type="button" @click="moveAdminDocument(document.path)">移动文档</button><button type="button" @click="duplicateAdminDocument(document.path)">复制文档</button><button type="button" @click="deleteAdminDocumentAt(document.path, document.hash)">删除文档</button></div></div></div>
               <p v-if="!adminCategories.length && !adminRootDocuments.length" class="admin-explorer__empty">暂无文档或目录</p>
             </div>
             <div class="admin-explorer__footer"><button type="button" @click="adminPanel = 'properties'">设置</button></div>

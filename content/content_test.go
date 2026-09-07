@@ -142,6 +142,47 @@ func TestAdminSourceUsesAtomicVersionedWrites(t *testing.T) {
 	}
 }
 
+func TestAdminStructureOperationsKeepFilesystemAndIndexInSync(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "content")
+	store := NewStore(root)
+	original, err := store.CreateSource("guides/original.md", []byte("# 原文\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := store.MoveSource("guides/original.md", "operations/moved.md", original.Hash)
+	if err != nil || moved.Path != "operations/moved.md" {
+		t.Fatalf("MoveSource() = %#v, %v", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "guides", "original.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("source still exists: %v", err)
+	}
+	copy, err := store.DuplicateSource("operations/moved.md", "operations/copy.md", moved.Hash)
+	if err != nil || copy.Path != "operations/copy.md" {
+		t.Fatalf("DuplicateSource() = %#v, %v", copy, err)
+	}
+	if err := store.UpsertCategory(Category{Path: "operations", Title: "运维", Order: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveCategory("operations", "archive"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "archive", "moved.md")); err != nil {
+		t.Fatalf("moved category file missing: %v", err)
+	}
+	if err := store.DeleteCategory("archive"); !errors.Is(err, ErrCategoryNotEmpty) {
+		t.Fatalf("DeleteCategory(non-empty) = %v", err)
+	}
+	if err := store.UpsertCategory(Category{Path: "empty", Title: "空目录"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteCategory("empty"); err != nil {
+		t.Fatalf("DeleteCategory(empty) = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "empty")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty category still exists: %v", err)
+	}
+}
+
 func TestAdminDocumentsIncludesDraftsAndSourcePaths(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "drafts/example.md", "---\ndraft: true\nslug: public-example.md\n---\n# 草稿\n")

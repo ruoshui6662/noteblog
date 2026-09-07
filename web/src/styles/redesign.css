@@ -198,6 +198,7 @@ dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
 .admin-workspace__primary:disabled { cursor: wait; opacity: .55; }
 .admin-workspace__primary--wide { width: 100%; margin-top: 10px; }
 .admin-workspace__message { position: fixed; top: 74px; left: 50%; z-index: 30; transform: translateX(-50%); margin: 0; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); padding: 8px 16px; box-shadow: 0 8px 24px rgb(24 31 29 / .08); color: var(--teal-deep); font-size: 12px; }
+.admin-workspace__message--error { color: #a64636; }
 .admin-workspace__body { display: grid; grid-template-columns: 280px minmax(0, 1fr) 380px; min-height: calc(100dvh - 64px); }
 .admin-explorer { position: sticky; top: 64px; display: flex; flex-direction: column; height: calc(100dvh - 64px); overflow-y: auto; border-right: 1px solid var(--line); background: var(--mist); padding: 20px 14px 14px; }
 .admin-explorer__header, .admin-explorer__section-title, .admin-explorer__category-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -222,6 +223,11 @@ dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
 .admin-explorer__category-name--root { display: block; color: var(--ink-muted); font-size: 11px; padding-bottom: 5px; }
 .admin-explorer__more { border: 0; background: transparent; color: var(--ink-muted); padding: 6px 8px; font-size: 16px; cursor: pointer; }
 .admin-explorer__document { display: flex; align-items: center; gap: 8px; width: calc(100% - 12px); margin-left: 12px; border: 0; border-radius: 5px; background: transparent; color: var(--ink-soft); padding: 8px; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.admin-explorer__document-row { position: relative; display: flex; align-items: center; }
+.admin-explorer__document-row .admin-explorer__document { flex: 1; min-width: 0; }
+.admin-explorer__document-more { flex: 0 0 auto; border: 0; border-radius: 4px; background: transparent; color: var(--ink-muted); padding: 5px 4px; font: inherit; font-size: 10px; cursor: pointer; opacity: 0; }
+.admin-explorer__document-row:hover .admin-explorer__document-more, .admin-explorer__document-more:focus-visible { opacity: 1; }
+.admin-explorer__document-row > .admin-explorer__context { position: absolute; top: 100%; right: 0; z-index: 5; width: 132px; margin: 0; }
 .admin-explorer__document .app-icon { width: 15px; height: 15px; opacity: .62; }
 .admin-explorer__document span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-explorer__document small { margin-left: auto; color: var(--teal-deep); font-size: 10px; }
